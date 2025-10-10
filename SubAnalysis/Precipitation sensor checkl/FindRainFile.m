@@ -26,4 +26,4 @@ parfor kk = 1:length(files)
         delete(fullfile(filepath,strrep(file,'.csv.gz','.xml')))
     end
 end
-save('PrecipitationLog','FileLog')
+save('RainFiles','FileLog')
