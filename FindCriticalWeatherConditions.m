@@ -1,9 +1,6 @@
 clear all
 close all
 clc
-addpath('functions')
-%datapath = 'C:\Users\CarlOscar\OneDrive - Universitetet i Stavanger\Documents\PhD_Stavanger\Bybrua\Data\Weather and Bridge deck acc data';
-datapath = 'C:\Users\CarlOscar\OneDrive - Universitetet i Stavanger\Documents\PhD_Stavanger\Bybrua\Data\NID_Article_RWIV_Data';
 
 
 files = dir(fullfile(datapath,'*.gz'));

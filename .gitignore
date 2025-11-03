@@ -1,0 +1,19 @@
+#Ignore folders:
+/Data/
+/Description/
+/Video/
+/old code/
+
+# temp files
+*.asv
+*.m~
+
+# Other files
+*.txt
+*.csv
+*.json
+*.mat
+*.png
+*.jpg
+*.jpeg
+*.pdf
