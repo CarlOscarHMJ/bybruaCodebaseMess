@@ -1,6 +1,7 @@
 function T = processCompressedFile(datapath, file_compressed)
 fullpath = fullfile(datapath, file_compressed);
-fprintf('Now reading: %s\n', file_compressed);
+fprintf('Now reading: %s, starttime %s', file_compressed,datestr(now,'HH.MM:SS'));
+tic
 gunzip(fullpath);
 
 csv_path = strrep(fullpath, '.gz', '');
@@ -43,6 +44,8 @@ T.Properties.UserData.Header = H;
 T.Properties.UserData.SampleRate_Hz = str2double(H.samplerate);
 
 if exist(csv_path,'file'), delete(csv_path); end
+Function_timing = toc;
+fprintf(', finished in %2.2f seconds\n',Function_timing)
 end
 
 function M = parseSegmentMatrix(segStrings, ncols)
