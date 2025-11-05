@@ -18,7 +18,15 @@ function h = ConnectFtpServer(siteName,xmlPath)
 % If nargin == 0, the function will list the server names from xml file
 
 if nargin < 2
-    xmlPath = 'C:\Users\CarlOscar\OneDrive - Universitetet i Stavanger\Documents\PhD_Stavanger\Diverse\Filezilla access\FileZilla.xml';
+
+    if ispc
+        xmlPath = 'C:\Users\CarlOscar\OneDrive - Universitetet i Stavanger\Documents\PhD_Stavanger\Diverse\Filezilla access\FileZilla.xml';
+    elseif isunix
+        xmlPath = '/home/carl/OneDrive/Documents/PhD_Stavanger/Diverse/Filezilla access/FileZilla.xml';
+    else
+        error('Unsupported operating system. Please provide a valid xmlPath.');
+    end
+
     if nargin < 1
         disp('Printing siteNames')
         ListServers(xmlPath,'Name')
