@@ -2,7 +2,13 @@ function T = processCompressedFile(datapath, file_compressed)
 fullpath = fullfile(datapath, file_compressed);
 fprintf('Now reading: %s, starttime %s', file_compressed,datestr(now,'HH.MM:SS'));
 tic
-gunzip(fullpath);
+try 
+    gunzip(fullpath);
+catch ME
+    fprintf(' - Could not unzip file, return empty table. Error occurred: %s\n', ME.message);
+    T = timetable;
+    return
+end
 
 csv_path = strrep(fullpath, '.gz', '');
 

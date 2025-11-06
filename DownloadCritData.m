@@ -20,38 +20,28 @@ conf.destination = destination;
 conf.structtype = structtype;
 %% Download data
 try
-    DownLoadRightCases(conf)
+    ProcessAllUnprocessedData(conf)
 catch ME
     fprintf('Error in %s (line %d): %s\n',ME.stack(1).name,ME.stack(1).line,ME.message)
 end
 
 end
-%% Helper functions
-function DownLoadRightCases(conf)
+
+function ProcessAllUnprocessedData(conf)
 server = conf.server;
-cd(server,'arkiv'); % All data is in arkiv
-YearFolders = dir(server);
-rootFolder  = server.RemoteWorkingDirectory;
-tic
+cd(server,'arkiv');
 
-for yy = 1:length(YearFolders)
-    year         = YearFolders(yy).name;
-    MonthFolders = dir(server,fullfile(rootFolder,year));
-    MonthFolders = MonthFolders([MonthFolders.isdir]);
+allServerFiles = FindAllServerFiles(server, '.csv.gz',conf);
 
-    for mm = 1:length(MonthFolders)
-        month = MonthFolders(mm).name;
-        datafiles = dir(server,fullfile(rootFolder,year,month,'*csv.gz'));
-        if isempty(datafiles); continue;end
-        Days = groupFilesByDay({datafiles.name});
+localMatFiles = dir(fullfile(conf.destination,'**/*.mat'));
+localMatFiles = {localMatFiles.name};
 
-        for dd = 1:height(Days)
-            DownloadPath = DownloadFiles(conf,Days.Files{dd});
-            DailyData = ReadAndSaveDay(conf,DownloadPath);
-        end
-    end
+Dates2Process = FindUnprocessedData(allServerFiles, localMatFiles);
+
+for i = 1:height(Dates2Process)
+    downloadPath = DownloadFiles(conf, Dates2Process.Files{i});
+    ReadAndSaveDay(conf, downloadPath);
 end
-
 end
 
 function downloadPath = DownloadFiles(conf,ServerFiles)
@@ -79,4 +69,91 @@ DailyData = ConvertDataTable2DataStruct(conf,T);
 
 DayStr = regexp(file,'\d{4}-\d{2}-\d{2}','match','once');
 save(fullfile(path,[DayStr,'.mat']),'DailyData','-v7')
+end
+
+function Dates2Process = FindUnprocessedData(serverFiles, localMatFiles)
+DaysGrouped = groupFilesByDay(serverFiles);
+processedDates = cellfun(@(x) regexp(x,'\d{4}-\d{2}-\d{2}','match','once'), localMatFiles, 'UniformOutput', false);
+
+DatesToUse = [];
+FilesToUse = {};
+for i = 1:height(DaysGrouped)
+    DayStr = regexp(DaysGrouped.Files{i}{1},'\d{4}-\d{2}-\d{2}','match','once');
+    if ~ismember(DayStr, processedDates)
+        DatesToUse{end+1,1} = DayStr; %#ok<AGROW>
+        FilesToUse{end+1,1} = DaysGrouped.Files{i}; %#ok<AGROW>
+    end
+end
+
+Dates2Process = table(DatesToUse, FilesToUse, 'VariableNames', {'Date','Files'});
+end
+
+%% Helper functions
+
+function allFiles = FindAllServerFiles(server, EndsWith, conf)
+logFolder = fullfile(conf.destination,'log');
+if ~exist(logFolder,'dir')
+    mkdir(logFolder);
+end
+logFile = fullfile(logFolder,'ftp_file_list.mat');
+
+updateLog = true;
+if exist(logFile,'file')
+    fileInfo = dir(logFile);
+    fileAgeDays = days(datetime('now') - datetime(fileInfo.datenum,'ConvertFrom','datenum'));
+    if fileAgeDays >= 14
+        answer = questdlg('Log exists and is older than 14 days old. Re-write log?', ...
+                          'Update FTP Log', ...
+                          'Yes','No','No');
+        if strcmp(answer,'No')
+            updateLog = false;
+        end
+    else
+        updateLog = false;
+    end
+end
+
+if ~updateLog
+    % Read existing log
+    S = load(logFile);
+    allFiles = S.allFiles;
+    fprintf('Read %d files from existing log.\n', length(allFiles));
+    return
+end
+
+% Otherwise, generate the file list
+allFiles = {};
+YearFolders = dir(server); 
+YearFolders = YearFolders([YearFolders.isdir] & ~ismember({YearFolders.name},{'.','..'}) );
+
+fprintf('Scanning %d year folders...\n', length(YearFolders));
+
+for y = 1:length(YearFolders)
+    year = YearFolders(y).name;
+    folderPath = fullfile('/arkiv', year);
+    months = dir(server, folderPath);
+    months = {months([months.isdir]).name};
+
+    for m = 1:length(months)
+        month = months{m};
+        monthFolder = fullfile('/arkiv', year, month);
+        try
+            files = dir(server, monthFolder);
+            files = files(~[files.isdir]); % keep only files
+            for f = 1:length(files)
+                if endsWith(files(f).name, EndsWith)
+                    allFiles{end+1,1} = fullfile(monthFolder, files(f).name); %#ok<AGROW>
+                end
+            end
+        catch
+            fprintf('  Could not list folder %s, skipping.\n', monthFolder);
+            continue;
+        end
+    end
+    fprintf('Processed year %s, total files so far: %d\n', year, length(allFiles));
+end
+
+% Save log
+save(logFile,'allFiles','-v7');
+fprintf('Saved FTP file list to log (%d files).\n', length(allFiles));
 end
