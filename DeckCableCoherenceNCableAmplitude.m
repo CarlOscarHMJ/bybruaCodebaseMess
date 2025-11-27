@@ -9,7 +9,12 @@ getDataConverageTable('plot',999);
 %%
 InspectPeriod = [datetime(2019,8,20),datetime(2019,9,24)];
 ByBroa = BridgeProject(dataRoot,'2019-8-28', '2019-8-28'); 
-% %%
-% ByBroaOverview = BridgeOverview(ByBroa);
-% ByBroaOverview.plotTimeHistory('acceleration');
-% ByBroaOverview.plotEpsdHistory(10,[]);
+%% Filter
+ByBroaOverview = BridgeOverview(ByBroa);
+ByBroaOverview = ByBroaOverview.fillMissingDataPoints;
+ByBroaOverview = ByBroaOverview.designFilter(plotFilter=true,figNum=999);
+ByBroaOverview = ByBroaOverview.designFilter('butter',order=6);
+ByBroaOverview = ByBroaOverview.applyFilter;
+
+%ByBroaOverview.plotTimeHistory('acceleration');
+ByBroaOverview.plotEpsdHistory(10,[]);

@@ -1,80 +1,72 @@
 function plotEPSDHistoryObject(BridgeData,CableData,TimePeriod,segmentDurationMinutes)
+% plotEPSDHistoryObject Plot EPSD history for deck and cable data with shared scaling.
+%   plotEPSDHistoryObject(BridgeData,CableData)
+%   plotEPSDHistoryObject(BridgeData,CableData,TimePeriod)
+%   plotEPSDHistoryObject(BridgeData,CableData,TimePeriod,segmentDurationMinutes)
 
-if exist('TimePeriod','var')
-    if ~isempty(TimePeriod)
-        Range = timerange(TimePeriod(1),TimePeriod(2));
-        CableData = CableData(Range,:);
-        BridgeData = BridgeData(Range,:);
-    end
+if nargin > 2 && ~isempty(TimePeriod)
+    range = timerange(TimePeriod(1),TimePeriod(2));
+    CableData = CableData(range,:);
+    BridgeData = BridgeData(range,:);
 end
 
-if ~exist('segmentDurationMinutes','var')
+if nargin < 4 || isempty(segmentDurationMinutes)
     segmentDurationMinutes = 10;
 end
 
 fmax = 15;
+cableGroups = findCableGroups(CableData.Properties.VariableNames);
 
-CableVars = CableData.Properties.VariableNames;
-cableGroups = findCableGroups(CableVars);
-
-fig=figure(2);clf;
+fig = figure(2); clf;
 theme(fig,"light")
-[t,nexttileRowCol] = tiledlayoutRowCol(3,2+size(cableGroups,1),"TileSpacing", "compact", "Padding", "compact");
-%Deck Data - Concrete
-nexttileRowCol(1,1);
-plot_epsd(BridgeData.Time,BridgeData.Conc_X,segmentDurationMinutes,false);
-title('Concrete deck')
-ylabel('x direction','Interpreter','latex')
-axis tight
-ylim([0,fmax])
-nexttileRowCol(2,1);
-plot_epsd(BridgeData.Time,BridgeData.Conc_Y,segmentDurationMinutes,false);
-ylabel('y direction','Interpreter','latex')
-axis tight
-ylim([0,fmax])
-nexttileRowCol(3,1);
-plot_epsd(BridgeData.Time,BridgeData.Conc_Z,segmentDurationMinutes,false);
-ylabel('z direction','Interpreter','latex')
-axis tight
-ylim([0,fmax])
-ylabel(t,'$f$ (Hz)','Interpreter','latex')
+[tiles,nexttileRowCol] = tiledlayoutRowCol(3,2+size(cableGroups,1), ...
+    "TileSpacing","compact","Padding","compact");
 
-%Deck Data - Steel
-nexttileRowCol(1,2);
-plot_epsd(BridgeData.Time,BridgeData.Steel_X,segmentDurationMinutes,false);
-title('Steel deck')
-axis tight
-ylim([0,fmax])
-nexttileRowCol(2,2);
-plot_epsd(BridgeData.Time,BridgeData.Steel_Y,segmentDurationMinutes,false);
-axis tight
-ylim([0,fmax])
-nexttileRowCol(3,2);
-plot_epsd(BridgeData.Time,BridgeData.Steel_Z,segmentDurationMinutes,false);
-axis tight
-ylim([0,fmax])
+deckTypes   = {'Conc','Steel'};
+deckTitles  = {'Concrete deck','Steel deck'};
+dirs        = {'X','Y','Z'};
+dirLabels   = {'x direction','y direction','z direction'};
 
-for ii = 1:size(cableGroups,1)
-    for jj = 1:size(cableGroups{ii,2},1)
-    nexttileRowCol(jj,2+ii);
-    cableName = cableGroups{ii,1};
-    cableDir  = char(cableGroups{ii,2}(jj));
-    plot_epsd(CableData.Time, CableData.([cableName '_' cableDir]),segmentDurationMinutes,false);
-    axis tight
-    ylim([0,fmax])
-    if jj == 1
-        title(cableName)
-    end
+for d = 1:numel(deckTypes)
+    for k = 1:numel(dirs)
+        nexttileRowCol(k,d);
+        varName = [deckTypes{d} '_' dirs{k}];
+        plot_epsd(BridgeData.Time,BridgeData.(varName),segmentDurationMinutes,false);
+        axis tight
+        ylim([0,fmax])
+        if d == 1
+            ylabel(dirLabels{k},'Interpreter','latex')
+        end
+        if k == 1
+            title(deckTitles{d})
+        end
     end
 end
 
-% Shared color limits for all EPSD plots
-axesHandles = findall(fig, 'Type', 'axes');
-clims = cell2mat(get(axesHandles, 'CLim'));
-sharedClim = [min(clims(:,1)), max(clims(:,2))];
-set(axesHandles, 'CLim', sharedClim);
+ylabel(tiles,'$f$ (Hz)','Interpreter','latex')
 
-% One shared colorbar on the side for the whole tiledlayout
+for ii = 1:size(cableGroups,1)
+    cableName = cableGroups{ii,1};
+    cableDirs = cableGroups{ii,2};
+    for jj = 1:numel(cableDirs)
+        nexttileRowCol(jj,2+ii);
+        varName = cableName + "_" + cableDirs(jj);
+        plot_epsd(CableData.Time,CableData.(varName),segmentDurationMinutes,false);
+        axis tight
+        ylim([0,fmax])
+        if jj == 1
+            title(cableName)
+        end
+    end
+end
+
+axesHandles = findall(fig,'Type','axes');
+clims = cell2mat(get(axesHandles,'CLim'));
+sharedClim = [min(clims(:,1)), max(clims(:,2))];
+set(axesHandles,'CLim',sharedClim);
+
+setTimeTicks(axesHandles,BridgeData.Time)
+
 cb = colorbar;
 cb.Layout.Tile = 'east';
 cb.Label.String = 'log$_{10}$ PSD ((m/s$^2$)$^2$/Hz)';
