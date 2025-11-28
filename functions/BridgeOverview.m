@@ -178,7 +178,7 @@ classdef BridgeOverview
                 return
             end
 
-            plotTimeHistoryObject(self,self.project.bridgeData, ...
+            BridgeOverview.plotTime(self.project.bridgeData, ...
                 self.project.cableData, ...
                 TimePeriod, SignalOutput);
         end
@@ -199,7 +199,7 @@ classdef BridgeOverview
                 return
             end
 
-            plotEPSDHistoryObject(self,self.project.bridgeData, ...
+            BridgeOverview.plotEPSD(self.project.bridgeData, ...
                 self.project.cableData, ...
                 TimePeriod, segmentDurationMinutes);
         end
@@ -433,6 +433,27 @@ classdef BridgeOverview
             y = real(ifft(Xf));
         end
     end
+    methods (Access = public, Static) % Plotting Helpers
+        function setGlobalYLimits(axesHandles,manualLimits)
+
+            if nargin >= 2 && ~isempty(manualLimits)
+                for ax = reshape(axesHandles,1,[])
+                    ylim(ax,manualLimits)
+                end
+                return
+            end
+
+            allLimits = cell2mat(get(axesHandles,'YLim'));
+            ymin = min(allLimits(:,1));
+            ymax = max(allLimits(:,2));
+            maxabs = max(abs([ymin ymax]));
+            globalLim = [-maxabs maxabs];
+
+            for ax = reshape(axesHandles,1,[])
+                ylim(ax,globalLim)
+            end
+        end
+    end
     methods (Access = private) % Plotting Helpers
         function checkForNaNs(self)
             if any(isnan(self.project.bridgeData.Variables),'all') ||...
@@ -440,12 +461,9 @@ classdef BridgeOverview
                 error('NaNs was found in signal, consider using fillMissingDataPoints function! Returning empty.')
             end
         end
-        function plotEPSDHistoryObject(~,BridgeData,CableData,TimePeriod,segmentDurationMinutes)
-            % plotEPSDHistoryObject Plot EPSD history for deck and cable data with shared scaling.
-            %   plotEPSDHistoryObject(BridgeData,CableData)
-            %   plotEPSDHistoryObject(BridgeData,CableData,TimePeriod)
-            %   plotEPSDHistoryObject(BridgeData,CableData,TimePeriod,segmentDurationMinutes)
-
+    end
+    methods (Access = private, Static) % Plotting Helpers
+        function plotEPSD(BridgeData,CableData,TimePeriod,segmentDurationMinutes)
             if nargin > 2 && ~isempty(TimePeriod)
                 range = timerange(TimePeriod(1),TimePeriod(2));
                 CableData = CableData(range,:);
@@ -507,14 +525,14 @@ classdef BridgeOverview
             sharedClim = [min(clims(:,1)), max(clims(:,2))];
             set(axesHandles,'CLim',sharedClim);
 
-            setTimeTicks(axesHandles,BridgeData.Time)
+            BridgeOverview.setTimeTicks(axesHandles,BridgeData.Time)
 
             cb = colorbar;
             cb.Layout.Tile = 'east';
             cb.Label.String = 'log$_{10}$ PSD ((m/s$^2$)$^2$/Hz)';
             cb.Label.Interpreter = 'latex';
         end
-        function plotTimeHistoryObject(~,BridgeData,CableData,TimePeriod,convert2DispOrVel)
+        function plotTime(BridgeData,CableData,TimePeriod,convert2DispOrVel)
 
             if exist('TimePeriod','var')
                 if ~isempty(TimePeriod)
@@ -525,7 +543,7 @@ classdef BridgeOverview
             end
 
             if exist('convert2DispOrVel','var') && ~strcmpi(convert2DispOrVel,'acceleration')
-                [BridgeData,CableData] = convertAcceleration(BridgeData,CableData,convert2DispOrVel);
+                [BridgeData,CableData] = BridgeOverview.convertAcceleration(BridgeData,CableData,convert2DispOrVel);
 
                 if strcmpi(convert2DispOrVel,'displacement')
                     unitDef = '\mathrm{';
@@ -586,9 +604,9 @@ classdef BridgeOverview
             end
 
             axesHandles = findall(fig,'Type','axes');
-            setTimeTicks(axesHandles,BridgeData.Time)
+            BridgeOverview.setTimeTicks(axesHandles,BridgeData.Time)
+            BridgeOverview.setGlobalYLimits(axesHandles)
         end
-
         function [BridgeData,CableData] = convertAcceleration(BridgeData,CableData,convert2DispOrVel)
             if strcmpi(convert2DispOrVel,'displacement')
                 dataout_type = 1;
