@@ -19,17 +19,28 @@ tickStart = dateshift(timeStart,'start','hour');
 tickEnd   = dateshift(timeEnd,'start','hour');
 tickTimes = tickStart:step:tickEnd;
 
+if spanHours < 25
+    tickFormat = 'HH:mm';        % no date
+else
+    tickFormat = 'MM-dd HH:mm';  % include date
+end
+
 for ax = reshape(axesHandles,1,[])
     xl = xlim(ax);
-    if isempty(xl) || all(isnan(xl))
+    if isempty(xl) || all(ismissing(xl))
         continue
     end
-    if isnumeric(xl)
-        ax.XTick = datenum(tickTimes);
-        datetick(ax,'x','HH:MM','keeplimits','keepticks');
-    else
+    if isa(ax.XAxis,'matlab.graphics.axis.decorator.DatetimeRuler')
         ax.XTick = tickTimes;
-        ax.XAxis.TickLabelFormat = 'HH:mm';
+        ax.XAxis.TickLabelFormat = tickFormat;
+    else
+        ax.XTick = datenum(tickTimes);
+        datetick(ax,'x',tickFormat,'keeplimits','keepticks');
+    end
+
+    if length(axesHandles) > 1
+        % remove date in right corner
+        ax.XAxis.SecondaryLabel.Visible = 'off';
     end
 end
 end

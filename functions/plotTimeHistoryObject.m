@@ -68,6 +68,9 @@ for ii = 1:size(cableGroups,1)
         end
     end
 end
+
+axesHandles = findall(fig,'Type','axes');
+setTimeTicks(axesHandles,BridgeData.Time)
 end
 
 function [BridgeData,CableData] = convertAcceleration(BridgeData,CableData,convert2DispOrVel)

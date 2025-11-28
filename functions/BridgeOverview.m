@@ -79,11 +79,11 @@ classdef BridgeOverview
             end
 
             for field = fieldsToFilter(:).'
-                if ~isprop(self,field)
+                if ~isprop(self.project,field)
                     continue
                 end
 
-                data = self.(field);
+                data = self.project.(field);
 
                 if istimetable(data) || istable(data)
                     varNames = data.Properties.VariableNames;
@@ -93,10 +93,10 @@ classdef BridgeOverview
                             data.(varNames{k}) = cast(func(double(v)),'like',v);
                         end
                     end
-                    self.(field) = data;
+                    self.project.(field) = data;
 
                 elseif isnumeric(data)
-                    self.(field) = cast(func(double(data)),'like',data);
+                    self.project.(field) = cast(func(double(data)),'like',data);
                 end
             end
         end
@@ -114,7 +114,7 @@ classdef BridgeOverview
                 %         rationale behind it compared to the
                 %         other methods. I do not recommend
                 %         its use.
-                method = 1 
+                method = 1
             end
 
             interpFunc = @(x) inpaint_nans(x,method);
@@ -178,7 +178,7 @@ classdef BridgeOverview
                 return
             end
 
-            plotTimeHistoryObject(self.project.bridgeData, ...
+            plotTimeHistoryObject(self,self.project.bridgeData, ...
                 self.project.cableData, ...
                 TimePeriod, SignalOutput);
         end
@@ -199,7 +199,7 @@ classdef BridgeOverview
                 return
             end
 
-            plotEPSDHistoryObject(self.project.bridgeData, ...
+            plotEPSDHistoryObject(self,self.project.bridgeData, ...
                 self.project.cableData, ...
                 TimePeriod, segmentDurationMinutes);
         end
@@ -436,8 +436,228 @@ classdef BridgeOverview
     methods (Access = private) % Plotting Helpers
         function checkForNaNs(self)
             if any(isnan(self.project.bridgeData.Variables),'all') ||...
-               any(isnan(self.project.cableData.Variables),'all')
+                    any(isnan(self.project.cableData.Variables),'all')
                 error('NaNs was found in signal, consider using fillMissingDataPoints function! Returning empty.')
+            end
+        end
+        function plotEPSDHistoryObject(~,BridgeData,CableData,TimePeriod,segmentDurationMinutes)
+            % plotEPSDHistoryObject Plot EPSD history for deck and cable data with shared scaling.
+            %   plotEPSDHistoryObject(BridgeData,CableData)
+            %   plotEPSDHistoryObject(BridgeData,CableData,TimePeriod)
+            %   plotEPSDHistoryObject(BridgeData,CableData,TimePeriod,segmentDurationMinutes)
+
+            if nargin > 2 && ~isempty(TimePeriod)
+                range = timerange(TimePeriod(1),TimePeriod(2));
+                CableData = CableData(range,:);
+                BridgeData = BridgeData(range,:);
+            end
+
+            if nargin < 4 || isempty(segmentDurationMinutes)
+                segmentDurationMinutes = 10;
+            end
+
+            fmax = 15;
+            cableGroups = findCableGroups(CableData.Properties.VariableNames);
+
+            fig = figure(2); clf;
+            theme(fig,"light")
+            [tiles,nexttileRowCol] = tiledlayoutRowCol(3,2+size(cableGroups,1), ...
+                "TileSpacing","compact","Padding","compact");
+
+            deckTypes   = {'Conc','Steel'};
+            deckTitles  = {'Concrete deck','Steel deck'};
+            dirs        = {'X','Y','Z'};
+            dirLabels   = {'x direction','y direction','z direction'};
+
+            for d = 1:numel(deckTypes)
+                for k = 1:numel(dirs)
+                    nexttileRowCol(k,d);
+                    varName = [deckTypes{d} '_' dirs{k}];
+                    plot_epsd(BridgeData.Time,BridgeData.(varName),segmentDurationMinutes,false);
+                    axis tight
+                    ylim([0,fmax])
+                    if d == 1
+                        ylabel(dirLabels{k},'Interpreter','latex')
+                    end
+                    if k == 1
+                        title(deckTitles{d})
+                    end
+                end
+            end
+
+            ylabel(tiles,'$f$ (Hz)','Interpreter','latex')
+
+            for ii = 1:size(cableGroups,1)
+                cableName = cableGroups{ii,1};
+                cableDirs = cableGroups{ii,2};
+                for jj = 1:numel(cableDirs)
+                    nexttileRowCol(jj,2+ii);
+                    varName = cableName + "_" + cableDirs(jj);
+                    plot_epsd(CableData.Time,CableData.(varName),segmentDurationMinutes,false);
+                    axis tight
+                    ylim([0,fmax])
+                    if jj == 1
+                        title(cableName)
+                    end
+                end
+            end
+
+            axesHandles = findall(fig,'Type','axes');
+            clims = cell2mat(get(axesHandles,'CLim'));
+            sharedClim = [min(clims(:,1)), max(clims(:,2))];
+            set(axesHandles,'CLim',sharedClim);
+
+            setTimeTicks(axesHandles,BridgeData.Time)
+
+            cb = colorbar;
+            cb.Layout.Tile = 'east';
+            cb.Label.String = 'log$_{10}$ PSD ((m/s$^2$)$^2$/Hz)';
+            cb.Label.Interpreter = 'latex';
+        end
+        function plotTimeHistoryObject(~,BridgeData,CableData,TimePeriod,convert2DispOrVel)
+
+            if exist('TimePeriod','var')
+                if ~isempty(TimePeriod)
+                    Range = timerange(TimePeriod(1),TimePeriod(2));
+                    CableData = CableData(Range,:);
+                    BridgeData = BridgeData(Range,:);
+                end
+            end
+
+            if exist('convert2DispOrVel','var') && ~strcmpi(convert2DispOrVel,'acceleration')
+                [BridgeData,CableData] = convertAcceleration(BridgeData,CableData,convert2DispOrVel);
+
+                if strcmpi(convert2DispOrVel,'displacement')
+                    unitDef = '\mathrm{';
+                    unit = 'm';
+                elseif strcmpi(convert2DispOrVel,'velocity')
+                    unitDef = '\dot{';
+                    unit = 'm/s';
+                end
+            else
+                unitDef = '\ddot{';
+                unit = 'm/s$^2$';
+            end
+
+            CableVars = CableData.Properties.VariableNames;
+            cableGroups = findCableGroups(CableVars);
+
+            fig=figure(1);clf;
+            theme(fig,"light")
+            [~,nexttileRowCol] = tiledlayoutRowCol(3,2+size(cableGroups,1),"TileSpacing", "compact", "Padding", "compact");
+            %Deck Data - Concrete
+            nexttileRowCol(1,1);
+            plot(BridgeData.Time,BridgeData.Conc_X);
+            title('Concrete deck')
+            ylabel(['$' unitDef 'x}$ (' unit ')'],'Interpreter','latex')
+            axis tight
+            nexttileRowCol(2,1);
+            plot(BridgeData.Time,BridgeData.Conc_Y);
+            ylabel(['$' unitDef 'y}$ (' unit ')'],'Interpreter','latex')
+            axis tight
+            nexttileRowCol(3,1);
+            plot(BridgeData.Time,BridgeData.Conc_Z);
+            ylabel(['$' unitDef 'z}$ (' unit ')'],'Interpreter','latex')
+            axis tight
+
+            %Deck Data - Steel
+            nexttileRowCol(1,2);
+            plot(BridgeData.Time,BridgeData.Steel_X);
+            title('Steel deck')
+            axis tight
+            nexttileRowCol(2,2);
+            plot(BridgeData.Time,BridgeData.Steel_Y);
+            axis tight
+            nexttileRowCol(3,2);
+            plot(BridgeData.Time,BridgeData.Steel_Z);
+            axis tight
+
+            for ii = 1:size(cableGroups,1)
+                for jj = 1:size(cableGroups{ii,2},1)
+                    nexttileRowCol(jj,2+ii);
+                    cableName = cableGroups{ii,1};
+                    cableDir  = char(cableGroups{ii,2}(jj));
+                    plot(CableData.Time, CableData.([cableName '_' cableDir]));
+                    axis tight
+                    if jj == 1
+                        title(cableName)
+                    end
+                end
+            end
+
+            axesHandles = findall(fig,'Type','axes');
+            setTimeTicks(axesHandles,BridgeData.Time)
+        end
+
+        function [BridgeData,CableData] = convertAcceleration(BridgeData,CableData,convert2DispOrVel)
+            if strcmpi(convert2DispOrVel,'displacement')
+                dataout_type = 1;
+            elseif strcmpi(convert2DispOrVel,'velocity')
+                dataout_type = 2;
+            end
+
+            bridgeVars = BridgeData.Properties.VariableNames;
+            bridgeDt = median(diff(seconds((BridgeData.Time-BridgeData.Time(1)))));
+            for k = 1:length(bridgeVars)
+                datain = BridgeData.(bridgeVars{k});
+                dataout = iomega(datain,bridgeDt,3,dataout_type);
+                dataout = detrend(dataout,3-dataout_type);
+                BridgeData.(bridgeVars{k}) = dataout;
+            end
+
+            cableVars = CableData.Properties.VariableNames;
+            cableDt = median(diff(seconds((CableData.Time-CableData.Time(1)))));
+            for k = 1:length(cableVars)
+                datain = CableData.(cableVars{k});
+                dataout = iomega(datain,cableDt,3,dataout_type);
+                dataout = detrend(dataout,3-dataout_type);
+                CableData.(cableVars{k}) = dataout;
+            end
+        end
+        function setTimeTicks(axesHandles,timeVec)
+            timeStart = min(timeVec);
+            timeEnd   = max(timeVec);
+            spanHours = hours(timeEnd - timeStart);
+
+            if     spanHours <= 2
+                step = minutes(10);
+            elseif spanHours <= 6
+                step = minutes(30);
+            elseif spanHours <= 25
+                step = hours(5);
+            elseif spanHours <= 72
+                step = hours(10);
+            else
+                step = days(1);
+            end
+
+            tickStart = dateshift(timeStart,'start','hour');
+            tickEnd   = dateshift(timeEnd,'start','hour');
+            tickTimes = tickStart:step:tickEnd;
+
+            if spanHours < 25
+                tickFormat = 'HH:mm';        % no date
+            else
+                tickFormat = 'MM-dd HH:mm';  % include date
+            end
+
+            for ax = reshape(axesHandles,1,[])
+                xl = xlim(ax);
+                if isempty(xl) || all(ismissing(xl))
+                    continue
+                end
+                if isa(ax.XAxis,'matlab.graphics.axis.decorator.DatetimeRuler')
+                    ax.XTick = tickTimes;
+                    ax.XAxis.TickLabelFormat = tickFormat;
+                else
+                    ax.XTick = datenum(tickTimes);
+                    datetick(ax,'x',tickFormat,'keeplimits','keepticks');
+                end
+
+                if length(axesHandles) > 1
+                    % remove date in right corner
+                    ax.XAxis.SecondaryLabel.Visible = 'off';
+                end
             end
         end
     end
