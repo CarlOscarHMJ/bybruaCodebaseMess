@@ -104,7 +104,7 @@ classdef BridgeProject
         end
     end
 
-    methods (Access = private)
+    methods (Access = private) % Bridgedata Loading
         function [bridgeData,weatherData] = loadBridgeData(self, startTime, endTime)
             dates = allDatesBetween(startTime,endTime);
             self.rawFiles = FindLocalBridgeDataFiles(self.dataRoot, string(dates,'yyyy-MM-dd'));
@@ -184,7 +184,7 @@ classdef BridgeProject
         end
     end
 
-    methods (Access = private)
+    methods (Access = private) % Cabledata Loading
         function cableData = loadCableData(self, startTime, endTime)
             cableDataRoot = fullfile(self.dataRoot,'WSDA_data');
             filesToLoad = findCableFilesInPeriod(self,cableDataRoot,startTime,endTime);
@@ -232,7 +232,7 @@ classdef BridgeProject
 
             function [tStart,tEnd] = getFileSpan(csvPath)
                 tStart = NaT;
-                tEnd   = NaT; 
+                tEnd   = NaT;
                 errormessage = sprintf('Error checking file in: %s\n Returning empty times',csvPath);
 
                 [status,out] = system(sprintf('head -n 50 "%s"', csvPath));
@@ -247,7 +247,7 @@ classdef BridgeProject
                     warning(errormessage)
                     return
                 end
-                
+
                 Num2EnsureCorrectDate = 1;
                 while isnat(tStart) || tStart < datetime(2018,1,1)
                     Num2EnsureCorrectDate = Num2EnsureCorrectDate + 1;
@@ -257,7 +257,7 @@ classdef BridgeProject
                         warning(errormessage)
                         return
                     end
-    
+
                     timeStr = strtrim(extractBefore(firstDataLine,commaPos));
                     try
                         tStart = datetime(timeStr,"InputFormat","MM/dd/yyyy HH:mm:ss.SSSSSSSSS");
@@ -298,34 +298,25 @@ classdef BridgeProject
 
 
         function timeTable = loadAndAppendCableData(~, fileList, startTime, endTime)
+            % loadAndAppendCableData  Load and concatenate time window from large CSV cable files.
+
+            warning('off','MATLAB:table:ModifiedAndSavedVarnames');
+
             tableChunks = cell(numel(fileList), 1);
-            warning('off', 'MATLAB:table:ModifiedAndSavedVarnames');
 
             for idx = 1:numel(fileList)
                 filePath = fullfile(fileList(idx).folder, fileList(idx).name);
-                matFileVersion = strrep(filePath,'.csv','.mat');
-
-                if exist(matFileVersion,"file")
-                    rawTable = load(matFileVersion);
-                    rawTable = rawTable.rawTable;
-                else
-                    importOpts = detectImportOptions(filePath);
-                    importOpts = setvaropts(importOpts, 1, "InputFormat", "MM/dd/yyyy HH:mm:ss.SSSSSSSSS");
-                    importOpts = setvartype(importOpts, 1, "datetime");
-                    importOpts.VariableNamingRule = "modify";
-    
-                    rawTable = readtable(filePath, importOpts);
-                    save(matFileVersion,'rawTable')
-                end
-                
-                selectionMask = rawTable.(1) >= startTime & rawTable.(1) <= endTime;
-                SelectedTable = rawTable(selectionMask, :);
-
-                tableChunks{idx} = table2timetable(SelectedTable);
+                tableChunks{idx} = BridgeProject.readCableWindow(filePath, startTime, endTime);
             end
 
-            timeTable = vertcat(tableChunks{:});
-            timeTable = sortrows(timeTable);
+            isNonEmpty = ~cellfun(@isempty, tableChunks);
+
+            if any(isNonEmpty)
+                timeTable = vertcat(tableChunks{isNonEmpty});
+                timeTable = sortrows(timeTable);
+            else
+                timeTable = timetable.empty;
+            end
         end
 
 
@@ -358,6 +349,71 @@ classdef BridgeProject
             tt(:,accVars) = array2table(acc, 'VariableNames', accVars);
             tt.Properties.VariableUnits(accVars) = "m/s^2";
         end
+    end
+    methods (Access=private,Static)
+        function timeTable = readCableWindow(filePath, startTime, endTime)
+            warning('off','MATLAB:table:ModifiedAndSavedVarnames');
+            headerLineCount = BridgeProject.countHeaderLinesUntilDataStart(filePath);
 
+            dataDatastore = datastore(filePath, ...
+                "Type",              "tabulartext", ...
+                "ReadVariableNames", true, ...
+                "Delimiter",         ",");
+
+            dataDatastore.NumHeaderLines = headerLineCount;
+            dataDatastore.ReadSize = 5e5;
+
+            previewTable = preview(dataDatastore);
+            timeVariableName = previewTable.Properties.VariableNames{1};
+
+            selectedTables = {};
+
+            while hasdata(dataDatastore)
+                dataChunk = read(dataDatastore);
+
+                if ~isdatetime(dataChunk.(timeVariableName))
+                    dataChunk.(timeVariableName) = datetime( ...
+                        dataChunk.(timeVariableName), ...
+                        "InputFormat", "MM/dd/yyyy HH:mm:ss.SSSSSSSSS");
+                end
+
+                timeMask = dataChunk.(timeVariableName) >= startTime & dataChunk.(timeVariableName) <= endTime;
+
+                if any(timeMask)
+                    selectedTables{end+1,1} = dataChunk(timeMask, :); %#ok<AGROW>
+                end
+            end
+
+            if isempty(selectedTables)
+                timeTable = timetable.empty;
+            else
+                mergedTable = vertcat(selectedTables{:});
+                timeTable = table2timetable(mergedTable);
+            end
+
+        end
+        function headerLineCount = countHeaderLinesUntilDataStart(filePath)
+            fileId = fopen(filePath, "r");
+            if fileId == -1
+                error("Could not open file: %s", filePath);
+            end
+
+            headerLineCount = 0;
+            cleanupObject = onCleanup(@() fclose(fileId));
+
+            while true
+                currentLine = fgetl(fileId);
+                if ~ischar(currentLine)
+                    headerLineCount = 0;
+                    break;
+                end
+
+                headerLineCount = headerLineCount + 1;
+
+                if contains(currentLine, "DATA_START")
+                    break;
+                end
+            end
+        end
     end
 end

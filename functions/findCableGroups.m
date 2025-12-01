@@ -3,6 +3,11 @@ function cableList = findCableGroups(varNames)
 %   cableList = findCableGroups(varNames)
 %   varNames -> cell/string array of names like 'C1W_x'
 %   cableList -> cell array: {cableId, [dirs]; ...}
+    
+    if isempty(varNames)
+        cableList = {};
+        return
+    end
 
     varNames = string(varNames);
     parts = split(varNames, "_");

@@ -4,13 +4,12 @@ classdef BridgeOverview
         filter struct
     end
 
-    methods (Access = public) % Creation
+    methods (Access = public)           % Creation
         function self = BridgeOverview(project)
             self.project   = project;
         end
     end
-
-    methods (Access = public) % Filter functions
+    methods (Access = public)           % Filter functions
         function self = designFilter(self,method,opts)
             arguments
                 self
@@ -160,7 +159,7 @@ classdef BridgeOverview
             end
         end
     end
-    methods (Access = public) % Plotting functions
+    methods (Access = public)           % Plotting functions
         function plotTimeHistory(self, SignalOutput, TimePeriod)
             % SignalOutput = 'acceleration', 'velocity', 'displacement'
             if nargin < 2
@@ -182,7 +181,6 @@ classdef BridgeOverview
                 self.project.cableData, ...
                 TimePeriod, SignalOutput);
         end
-
         function plotEpsdHistory(self, segmentDurationMinutes,TimePeriod)
             if nargin < 2
                 segmentDurationMinutes = 10;
@@ -203,7 +201,21 @@ classdef BridgeOverview
                 self.project.cableData, ...
                 TimePeriod, segmentDurationMinutes);
         end
+        function plotCablePhaseSpace(self, TimePeriod)
+            if nargin < 2
+                TimePeriod = [];
+            end
 
+            try
+                checkForNaNs(self);
+            catch ME
+                warning(ME.message);
+                return
+            end
+
+            BridgeOverview.plotCablePhaseSpaceStatic(self.project.bridgeData, ...
+                self.project.cableData, TimePeriod);
+        end
         function [Cxy,f,Pxx,Pyy,Pxy] = coherence(self, deckField, cableField, timePeriod, plotCoherence)
             if nargin < 5
                 plotCoherence = false;
@@ -230,45 +242,89 @@ classdef BridgeOverview
                 cableTime,  cableData, ...
                 timePeriod, plotCoherence);
         end
+        function [peakFreq,coherenceVal,response] = plotHeaveCoherence(self, cableField, selectedTimePeriod, opts)
+            %plotHeaveCoherence Plot heave coherence and return peak and queried values
 
-        function plotHeaveCoherence(self, cableField, selectedTimePeriod, fHigh)
-            if nargin < 4
-                fHigh = 10;
+            arguments
+                self
+                cableField
+                selectedTimePeriod
+                opts.fLow (1,1) double = 0
+                opts.fHigh (1,1) double = 10
+                opts.Npeaks (1,1) double = 5
+                opts.queryFreq double = []
             end
 
-            fig = figure; clf;
+            fLow  = opts.fLow;
+            fHigh = opts.fHigh;
+            queryFreq = opts.queryFreq;
+
+            fig = figure(3); clf;
             theme(fig,"light")
             [t, nexttileRowCol] = tiledlayoutRowCol(2,3,"TileSpacing","compact","Padding","compact");
 
             DeckPos = {'Conc_','Steel_'};
+
+            peakFreq     = cell(1,2);
+            coherenceVal = cell(1,2);
+
+            response = struct( ...
+                'deckPos',      [], ...
+                'deckField',    [], ...
+                'cableField',   [], ...
+                'peakFreq',     [], ...
+                'cohAtPeaks',   [], ...
+                'queryFreq',    [], ...
+                'deckAtQuery',  [], ...
+                'cableAtQuery', [], ...
+                'cohAtQuery',   [], ...
+                'gammaAtQuery', [], ...
+                'rhoAtQuery',   [] ...
+                );
+
             for ii = 1:2
                 deckField = [DeckPos{ii} 'Z'];
 
                 [Cxy,f,Pxx,Pyy,~] = self.coherence(deckField, cableField, selectedTimePeriod, false);
+
+                response(ii).deckPos    = DeckPos{ii}(1:end-1);
+                response(ii).deckField  = deckField;
+                response(ii).cableField = char(cableField);
 
                 nexttileRowCol(ii,1,'ColSpan',2);
                 yyaxis left
                 semilogy(f,Pxx,'DisplayName',[DeckPos{ii}(1:end-1) '$-z$']);
                 hold on
                 semilogy(f,Pyy,'DisplayName',[char(cableField) '']);
-                ylabel('$S_{\ddot{\hat{y}}}$ or $S_{\ddot{z}}$ $\mathrm{((m/s^2)^2)/Hz}$','Interpreter','latex','FontSize',20)
+                ylabel('$S_{\ddot{\hat{y}}}$ or $S_{\ddot{z}}$ $\mathrm{((m/s^2)^2)/Hz}$','Interpreter','latex','FontSize',14)
 
                 yyaxis right
                 plot(f,abs(Cxy).^2,'DisplayName','$|\mathit{coh}|^2$')
                 ylabel(['$|\mathit{coh}(f,\Delta Z_{\mathrm{' DeckPos{ii}(1:end-1) '}}, \Delta \hat{y}_{\mathrm{' char(cableField) '}})|^2$'], ...
-                    'Interpreter','latex','FontSize',20)
+                    'Interpreter','latex','FontSize',14)
                 ylim([0 1])
-                xlim([0 fHigh])
-                xticks(1:fHigh)
+                xlim([fLow fHigh])
+                xticks([fLow 1:fHigh])
 
-                [peakVal,peakFreq] = findpeaks(abs(Cxy).^2,f,'MinPeakHeight',0.2);
-                [~,idx] = sort(peakVal,'descend');
-                peakFreq = peakFreq(idx);
+                PeakFindingIdx = (fLow <= f) & (f <= fHigh);
+                [peakVal,peakFreqTmp] = findpeaks(abs(Cxy(PeakFindingIdx)).^2, ...
+                    f(PeakFindingIdx),'MinPeakHeight',0.2);
 
-                xl = xline(peakFreq,'--k','Alpha',0.2,'LineWidth',2);
-                PeakFreqLegends = arrayfun(@(x) sprintf('$f=%.2f$',x), peakFreq, 'UniformOutput', false);
+                [peakValSorted,idx] = sort(peakVal,'descend');
+                nUse = min(opts.Npeaks,numel(peakValSorted));
+
+                peakFreq{ii}     = peakFreqTmp(idx(1:nUse));
+                coherenceVal{ii} = peakValSorted(1:nUse);
+
+                response(ii).peakFreq   = peakFreq{ii};
+                response(ii).cohAtPeaks = coherenceVal{ii};
+
+                xl = xline(peakFreq{ii},'--k','Alpha',0.2,'LineWidth',2);
+                PeakFreqLegends = arrayfun(@(x,y) sprintf('$|coh(%.2f)|^2=%.2f$',x,y), ...
+                    peakFreq{ii},coherenceVal{ii}, 'UniformOutput', false);
                 set(xl,{'DisplayName'},PeakFreqLegends(:))
-                legend('Interpreter','latex','FontSize',16)
+
+                legend('Interpreter','latex','FontSize',12)
                 ax = gca;
                 ax.XGrid = 'on';
 
@@ -276,22 +332,42 @@ classdef BridgeOverview
                 plot(f,real(Cxy),'--','DisplayName',['$\gamma_{z\hat{y}}(f,\Delta Z_{\mathrm{' DeckPos{ii}(1:end-1) '}}, \Delta \hat{Y}_{\mathrm{' char(cableField) '}})$'])
                 hold on
                 plot(f,imag(Cxy),'-.','DisplayName',['$\rho_{z\hat{y}}(f,\Delta Z_{\mathrm{' DeckPos{ii}(1:end-1) '}}, \Delta \hat{Y}_{\mathrm{' char(cableField) '}})$'])
-                xline(peakFreq,'--k','Alpha',0.2,'LineWidth',2,'HandleVisibility','off');
+                xline(peakFreq{ii},'--k','Alpha',0.2,'LineWidth',2,'HandleVisibility','off');
                 ylim([-1 1])
                 xlim([0 fHigh])
                 xticks(1:fHigh)
-                legend('Interpreter','latex','FontSize',16)
+                legend('Interpreter','latex','FontSize',12)
                 grid on
+
+                if ~isempty(queryFreq)
+                    qf = queryFreq(:);
+                    idxQuery = arrayfun(@(fq) find(abs(f - fq) == min(abs(f - fq)),1,'first'), qf);
+
+                    fqClosest   = f(idxQuery);
+                    deckClosest = Pxx(idxQuery);
+                    cableClosest = Pyy(idxQuery);
+                    CxyClosest  = Cxy(idxQuery);
+
+                    response(ii).queryFreq    = fqClosest(:).';
+                    response(ii).deckAtQuery  = deckClosest(:).';
+                    response(ii).cableAtQuery = cableClosest(:).';
+                    response(ii).cohAtQuery   = abs(CxyClosest(:).').^2;
+                    response(ii).gammaAtQuery = real(CxyClosest(:).');
+                    response(ii).rhoAtQuery   = imag(CxyClosest(:).');
+                end
             end
 
-            xlabel(t,'$f$ (Hz)','Interpreter','latex','FontSize',20)
-            title(t,['Coherence between deck and ' char(cableField) ' between ' ...
+            xlabel(t,'$f$ (Hz)','Interpreter','latex','FontSize',14)
+            title(t,['Coherence between deck and ' ...
+                strrep(char(cableField),'_','\_') ...
+                ' between ' ...
                 char(selectedTimePeriod(1)) ' and ' ...
                 char(selectedTimePeriod(2),'HH:mm:SS')],...
-                'Interpreter','latex','Fontsize',24)
+                'Interpreter','latex','Fontsize',16)
         end
+
     end
-    methods (Access = private) % Filter Helpers
+    methods (Access = private)          % Filter Helpers
         function fs = defaultSamplingRate(self,fsIn)
             if ~isnan(fsIn)
                 fs = fsIn;
@@ -433,7 +509,7 @@ classdef BridgeOverview
             y = real(ifft(Xf));
         end
     end
-    methods (Access = public, Static) % Plotting Helpers
+    methods (Access = public, Static)   % Plotting Helpers
         function setGlobalYLimits(axesHandles,manualLimits)
 
             if nargin >= 2 && ~isempty(manualLimits)
@@ -454,7 +530,7 @@ classdef BridgeOverview
             end
         end
     end
-    methods (Access = private) % Plotting Helpers
+    methods (Access = private)          % Plotting Helpers
         function checkForNaNs(self)
             if any(isnan(self.project.bridgeData.Variables),'all') ||...
                     any(isnan(self.project.cableData.Variables),'all')
@@ -462,7 +538,7 @@ classdef BridgeOverview
             end
         end
     end
-    methods (Access = private, Static) % Plotting Helpers
+    methods (Access = private, Static)  % Plotting Helpers
         function plotEPSD(BridgeData,CableData,TimePeriod,segmentDurationMinutes)
             if nargin > 2 && ~isempty(TimePeriod)
                 range = timerange(TimePeriod(1),TimePeriod(2));
@@ -531,71 +607,85 @@ classdef BridgeOverview
             cb.Layout.Tile = 'east';
             cb.Label.String = 'log$_{10}$ PSD ((m/s$^2$)$^2$/Hz)';
             cb.Label.Interpreter = 'latex';
+
+            t1 = char(string(min(BridgeData.Time),"uuuu-MM-dd HH:mm:ss"));
+            t2 = char(string(max(BridgeData.Time),"uuuu-MM-dd HH:mm:ss"));
+
+            periodTitle = ['Plotted period: ' ...
+                t1 '  $\rightarrow$  ' t2];
+
+            title(tiles, periodTitle, 'Interpreter','latex')
         end
         function plotTime(BridgeData,CableData,TimePeriod,convert2DispOrVel)
 
-            if exist('TimePeriod','var')
-                if ~isempty(TimePeriod)
-                    Range = timerange(TimePeriod(1),TimePeriod(2));
-                    CableData = CableData(Range,:);
-                    BridgeData = BridgeData(Range,:);
-                end
+            if nargin > 2 && ~isempty(TimePeriod)
+                range = timerange(TimePeriod(1),TimePeriod(2));
+                CableData  = CableData(range,:);
+                BridgeData = BridgeData(range,:);
             end
 
-            if exist('convert2DispOrVel','var') && ~strcmpi(convert2DispOrVel,'acceleration')
-                [BridgeData,CableData] = BridgeOverview.convertAcceleration(BridgeData,CableData,convert2DispOrVel);
+            if nargin < 4
+                convert2DispOrVel = [];
+            end
 
-                if strcmpi(convert2DispOrVel,'displacement')
-                    unitDef = '\mathrm{';
-                    unit = 'm';
-                elseif strcmpi(convert2DispOrVel,'velocity')
-                    unitDef = '\dot{';
-                    unit = 'm/s';
+            if ~isempty(convert2DispOrVel) && ~strcmpi(convert2DispOrVel,'acceleration')
+                [BridgeData,CableData] = BridgeOverview.convertAcceleration(BridgeData,CableData,convert2DispOrVel);
+                switch lower(convert2DispOrVel)
+                    case 'displacement'
+                        unitDef = '\mathrm{';
+                        unit    = 'm';
+                    case 'velocity'
+                        unitDef = '\dot{';
+                        unit    = 'm/s';
+                    otherwise
+                        unitDef = '\ddot{';
+                        unit    = 'm/s$^2$';
                 end
             else
                 unitDef = '\ddot{';
-                unit = 'm/s$^2$';
+                unit    = 'm/s$^2$';
             end
 
-            CableVars = CableData.Properties.VariableNames;
-            cableGroups = findCableGroups(CableVars);
+            cableGroups = findCableGroups(CableData.Properties.VariableNames);
+            numberOfCableGroups  = size(cableGroups,1);
+            numberOfBridgeGroups = size(BridgeData.Properties.VariableNames,2)/3;
 
-            fig=figure(1);clf;
+            fig = figure(1); clf;
             theme(fig,"light")
-            [~,nexttileRowCol] = tiledlayoutRowCol(3,2+size(cableGroups,1),"TileSpacing", "compact", "Padding", "compact");
-            %Deck Data - Concrete
-            nexttileRowCol(1,1);
-            plot(BridgeData.Time,BridgeData.Conc_X);
-            title('Concrete deck')
-            ylabel(['$' unitDef 'x}$ (' unit ')'],'Interpreter','latex')
-            axis tight
-            nexttileRowCol(2,1);
-            plot(BridgeData.Time,BridgeData.Conc_Y);
-            ylabel(['$' unitDef 'y}$ (' unit ')'],'Interpreter','latex')
-            axis tight
-            nexttileRowCol(3,1);
-            plot(BridgeData.Time,BridgeData.Conc_Z);
-            ylabel(['$' unitDef 'z}$ (' unit ')'],'Interpreter','latex')
-            axis tight
+            [tiles,nexttileRowCol] = tiledlayoutRowCol(3,numberOfBridgeGroups+numberOfCableGroups, ...
+                "TileSpacing","compact","Padding","compact");
 
-            %Deck Data - Steel
-            nexttileRowCol(1,2);
-            plot(BridgeData.Time,BridgeData.Steel_X);
-            title('Steel deck')
-            axis tight
-            nexttileRowCol(2,2);
-            plot(BridgeData.Time,BridgeData.Steel_Y);
-            axis tight
-            nexttileRowCol(3,2);
-            plot(BridgeData.Time,BridgeData.Steel_Z);
-            axis tight
+            deckTypes  = {'Conc','Steel'};
+            deckTitles = {'Concrete deck','Steel deck'};
+            dirs       = {'X','Y','Z'};
+            dirLatex   = {'x','y','z'};
 
-            for ii = 1:size(cableGroups,1)
-                for jj = 1:size(cableGroups{ii,2},1)
+
+            for d = 1:numberOfBridgeGroups
+                for k = 1:numel(dirs)
+                    nexttileRowCol(k,d);
+                    varName = sprintf('%s_%s',deckTypes{d},dirs{k});
+                    plot(BridgeData.Time,BridgeData.(varName));
+                    axis tight
+                    if d == 1
+                        ylabel(['$' unitDef dirLatex{k} '}$ (' unit ')'],'Interpreter','latex')
+                    end
+                    if k == 1
+                        title(deckTitles{d})
+                    end
+                end
+            end
+
+            ylabel(tiles,'Time','Interpreter','none')
+
+            for ii = 1:numberOfCableGroups
+                cableName = cableGroups{ii,1};
+                cableDirs = cableGroups{ii,2};
+                for jj = 1:numel(cableDirs)
                     nexttileRowCol(jj,2+ii);
-                    cableName = cableGroups{ii,1};
-                    cableDir  = char(cableGroups{ii,2}(jj));
-                    plot(CableData.Time, CableData.([cableName '_' cableDir]));
+                    dirChar = char(cableDirs(jj));
+                    varName = cableName + "_" + dirChar;
+                    plot(CableData.Time, CableData.(varName));
                     axis tight
                     if jj == 1
                         title(cableName)
@@ -606,6 +696,14 @@ classdef BridgeOverview
             axesHandles = findall(fig,'Type','axes');
             BridgeOverview.setTimeTicks(axesHandles,BridgeData.Time)
             BridgeOverview.setGlobalYLimits(axesHandles)
+
+            t1 = char(string(min(BridgeData.Time),"uuuu-MM-dd HH:mm:ss"));
+            t2 = char(string(max(BridgeData.Time),"uuuu-MM-dd HH:mm:ss"));
+
+            periodTitle = ['Plotted period: ' ...
+                t1 '  $\rightarrow$  ' t2];
+
+            title(tiles, periodTitle, 'Interpreter','latex')
         end
         function [BridgeData,CableData] = convertAcceleration(BridgeData,CableData,convert2DispOrVel)
             if strcmpi(convert2DispOrVel,'displacement')
@@ -613,23 +711,33 @@ classdef BridgeOverview
             elseif strcmpi(convert2DispOrVel,'velocity')
                 dataout_type = 2;
             end
-
-            bridgeVars = BridgeData.Properties.VariableNames;
-            bridgeDt = median(diff(seconds((BridgeData.Time-BridgeData.Time(1)))));
-            for k = 1:length(bridgeVars)
-                datain = BridgeData.(bridgeVars{k});
-                dataout = iomega(datain,bridgeDt,3,dataout_type);
-                dataout = detrend(dataout,3-dataout_type);
-                BridgeData.(bridgeVars{k}) = dataout;
+            
+            if ~isempty(BridgeData)
+                bridgeVars = BridgeData.Properties.VariableNames;
+                bridgeDt = median(diff(seconds((BridgeData.Time-BridgeData.Time(1)))));
+                for k = 1:length(bridgeVars)
+                    datain = BridgeData.(bridgeVars{k});
+                    N = length(datain);
+                    datain = [flip(datain(2:end));datain;flip(datain(1:end-1))];
+                    dataout = iomega(datain,bridgeDt,3,dataout_type);
+                    dataout = dataout(N:N*2-1);
+                    dataout = detrend(dataout,3-dataout_type);
+                    BridgeData.(bridgeVars{k}) = dataout;
+                end
             end
 
-            cableVars = CableData.Properties.VariableNames;
-            cableDt = median(diff(seconds((CableData.Time-CableData.Time(1)))));
-            for k = 1:length(cableVars)
-                datain = CableData.(cableVars{k});
-                dataout = iomega(datain,cableDt,3,dataout_type);
-                dataout = detrend(dataout,3-dataout_type);
-                CableData.(cableVars{k}) = dataout;
+            if ~isempty(CableData)
+                cableVars = CableData.Properties.VariableNames;
+                cableDt = median(diff(seconds((CableData.Time-CableData.Time(1)))));
+                for k = 1:length(cableVars)
+                    datain = CableData.(cableVars{k});
+                    N = length(datain);
+                    datain = [flip(datain(2:end));datain;flip(datain(1:end-1))];
+                    dataout = iomega(datain,cableDt,3,dataout_type);
+                    dataout = dataout(N:N*2-1);
+                    dataout = detrend(dataout,3-dataout_type);
+                    CableData.(cableVars{k}) = dataout;
+                end
             end
         end
         function setTimeTicks(axesHandles,timeVec)
@@ -637,7 +745,9 @@ classdef BridgeOverview
             timeEnd   = max(timeVec);
             spanHours = hours(timeEnd - timeStart);
 
-            if     spanHours <= 2
+            if     spanHours <= .5
+                step = minutes(2);
+            elseif spanHours <= 2
                 step = minutes(10);
             elseif spanHours <= 6
                 step = minutes(30);
@@ -649,14 +759,27 @@ classdef BridgeOverview
                 step = days(1);
             end
 
-            tickStart = dateshift(timeStart,'start','hour');
-            tickEnd   = dateshift(timeEnd,'start','hour');
+            plotSpan = timeEnd-timeStart;
+            if      plotSpan <= hours(1)
+                shiftUnit = 'minute';
+            elseif  plotSpan <= days(1.1)
+                shiftUnit = 'hour';
+            elseif  plotSpan <= weeks(1)
+                shiftUnit = 'day';
+            else
+                shiftUnit = 'month';
+            end
+
+            tickStart = dateshift(timeStart,'start',shiftUnit);
+            tickEnd   = dateshift(timeEnd,'start',shiftUnit);
             tickTimes = tickStart:step:tickEnd;
 
             if spanHours < 25
-                tickFormat = 'HH:mm';        % no date
+                tickFormatDatetime = 'HH:mm';      % datetime format
+                tickFormatDatenum  = 'HH:MM';      % datetick format (MM = minutes)
             else
-                tickFormat = 'MM-dd HH:mm';  % include date
+                tickFormatDatetime = 'MM-dd HH:mm';
+                tickFormatDatenum  = 'mm-dd HH:MM'; % datetick format (mm = month)
             end
 
             for ax = reshape(axesHandles,1,[])
@@ -664,19 +787,121 @@ classdef BridgeOverview
                 if isempty(xl) || all(ismissing(xl))
                     continue
                 end
-                if isa(ax.XAxis,'matlab.graphics.axis.decorator.DatetimeRuler')
-                    ax.XTick = tickTimes;
-                    ax.XAxis.TickLabelFormat = tickFormat;
-                else
+
+                % numeric datenum axis
+                if isnumeric(xl)
                     ax.XTick = datenum(tickTimes);
-                    datetick(ax,'x',tickFormat,'keeplimits','keepticks');
+                    datetick(ax,'x',tickFormatDatenum,'keeplimits','keepticks');
+                else
+                    ax.XTick = tickTimes;
+                    ax.XAxis.TickLabelFormat = tickFormatDatetime;
                 end
 
                 if length(axesHandles) > 1
-                    % remove date in right corner
                     ax.XAxis.SecondaryLabel.Visible = 'off';
                 end
             end
         end
+        function plotCablePhaseSpaceStatic(bridgeData, cableData, timePeriod)
+            if nargin > 2 && ~isempty(timePeriod)
+                tr = timerange(timePeriod(1), timePeriod(2));
+                cableData  = cableData(tr,:);
+                bridgeData = bridgeData(tr,:);
+            end
+
+            cableAcc  = cableData;
+            [~, cableVel]  = BridgeOverview.convertAcceleration(bridgeData, cableData, 'velocity');
+            [~, cableDisp] = BridgeOverview.convertAcceleration(bridgeData, cableData, 'displacement');
+
+            unitDefs = {'\ddot{','\dot{','{'};
+            units    = {'m/s$^2$','m/s','m'};
+
+            cableGroups = findCableGroups(cableData.Properties.VariableNames);
+
+            maxPoints = 2000;
+
+            fig = figure(5); clf;
+            theme(fig,"light")
+            [tiles,nextTile] = tiledlayoutRowCol(3, size(cableGroups,1), ...
+                "TileSpacing","compact","Padding","compact");
+
+            for s = 1:3
+                switch s
+                    case 1
+                        cableSet = cableAcc;
+                    case 2
+                        cableSet = cableVel;
+                    case 3
+                        cableSet = cableDisp;
+                end
+
+                t = cableSet.Time;
+                nSamples = numel(t);
+                if nSamples < 2
+                    continue
+                end
+
+                dtSeconds = median(seconds(diff(t)));
+                totalDurationSeconds = seconds(t(end) - t(1));
+
+                if nSamples <= maxPoints || totalDurationSeconds <= 0 || dtSeconds <= 0
+                    indexSelection = 1:nSamples;
+                else
+                    desiredDt = totalDurationSeconds / (maxPoints - 1);
+                    sampleStep = max(1, round(desiredDt / dtSeconds));
+                    indexSelection = 1:sampleStep:nSamples;
+                end
+
+                for c = 1:size(cableGroups,1)
+                    cableName = cableGroups{c,1};
+                    dirs      = cableGroups{c,2};
+
+                    if ~any(dirs=="x") || ~any(dirs=="y")
+                        continue
+                    end
+
+                    vx = cableName + "_x";
+                    vy = cableName + "_y";
+
+                    xAll = cableSet.(vx);
+                    yAll = cableSet.(vy);
+
+                    if numel(xAll) < 2 || numel(yAll) < 2
+                        continue
+                    end
+
+                    x = xAll(indexSelection);
+                    y = yAll(indexSelection);
+
+                    nextTile(s,c);
+                    plot(x,y,'.k')
+
+                    lim = max(abs([x; y]));
+                    xlim([-lim lim])
+                    ylim([-lim lim])
+                    axis square
+
+                    yt = yticks;
+                    xticks(yt);
+
+                    if s == 1
+                        title(cableName,'Interpreter','none')
+                    end
+
+                    if s == 3
+                        xlabel(['$' unitDefs{s} 'x}$ (' units{s} ')'],'Interpreter','latex')
+                    end
+
+                    if c == 1
+                        ylabel(['$' unitDefs{s} 'y}$ (' units{s} ')'],'Interpreter','latex')
+                    end
+                end
+            end
+
+            t1 = char(string(min(cableData.Time),"uuuu-MM-dd HH:mm:ss"));
+            t2 = char(string(max(cableData.Time),"uuuu-MM-dd HH:mm:ss"));
+            title(tiles, ['Cable phase space: ' t1 '  $\rightarrow$  ' t2], 'Interpreter','latex')
+        end
+
     end
 end

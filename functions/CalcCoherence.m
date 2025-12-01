@@ -44,10 +44,17 @@ if PlotCoherence
     semilogy(f,Pxx,'-.','DisplayName','Cable response'); hold on
     semilogy(f,Pyy,'--','DisplayName','Bridge deck response')
 end
+end
 
-% subplot(2,1,2)
-% plot(f, unwrap(angle(Cxy)))
-% ylabel('\angle C_{xy}(f) (rad)')
-% xlabel('f (Hz)')
-% xlim([0 10])
+function [x,t] = selectTimeInterval(x,t,Period)
+assert(length(t) == length(x),'Data and time arrays should be of same length!')
+idx = t >= Period(1) & ...
+    t <= Period(2);
+t = t(idx);
+x = x(idx);
+end
+
+function samplFreq = getSampleFreq(t)
+samplFreq = 1/median(diff(seconds(t-t(1))));
+samplFreq = round(samplFreq);
 end
