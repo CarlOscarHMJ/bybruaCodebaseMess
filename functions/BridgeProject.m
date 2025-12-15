@@ -195,8 +195,8 @@ classdef BridgeProject
             end
             cableData = applyCableCalibration(self,cableData);
             cableData = CableDataShift2GlbalCoords(cableData);
+            cableData = BridgeProject.RemoveDuplicates(cableData);
         end
-
         function files = findCableFilesInPeriod(~,cableDataRoot,startTime,endTime)
             if ischar(startTime) || isstring(startTime)
                 startTime = datetime(startTime,'InputFormat','yyyy-MM-dd''T''HH:mm:ss');
@@ -295,8 +295,6 @@ classdef BridgeProject
                 end
             end
         end
-
-
         function timeTable = loadAndAppendCableData(~, fileList, startTime, endTime)
             % loadAndAppendCableData  Load and concatenate time window from large CSV cable files.
 
@@ -318,8 +316,6 @@ classdef BridgeProject
                 timeTable = timetable.empty;
             end
         end
-
-
         function files = addCableMeasurementPeriod(~,files)
             for k = 1:numel(files)
                 f = fullfile(files(k).folder, files(k).name);
@@ -414,6 +410,10 @@ classdef BridgeProject
                     break;
                 end
             end
+        end
+        function timetableData = RemoveDuplicates(timetableData)
+            [~, ia] = unique(timetableData.Time, 'stable');
+            timetableData = timetableData(ia,:);
         end
     end
 end
