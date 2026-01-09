@@ -9,7 +9,7 @@ getDataConverageTable('plot',999);
 %% Load Bridge
 clear Bybroa BybroaOverview
 startTime = datetime('2019-8-28');
-endTime   = datetime('2019-8-28 23:59:59');
+endTime   = datetime('2019-8-28 11:59:59');
 ByBroa = BridgeProject(dataRoot,startTime, endTime); 
 %% Filter
 ByBroaOverview = BridgeOverview(ByBroa);

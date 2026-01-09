@@ -14,6 +14,11 @@ classdef BridgeProject
 
     methods
         function self = BridgeProject(dataRoot, startTime, endTime)
+            if nargin < 3
+                warning('Not enough inputs')
+                return
+            end
+
             if ischar(startTime) || isstring(startTime)
                 startTime = datetime(startTime,'InputFormat','yyyy-MM-dd');
             end
@@ -22,10 +27,6 @@ classdef BridgeProject
                 endTime = datetime(endTime, 'InputFormat', 'yyyy-MM-dd') + days(1) - milliseconds(1);
             end
 
-            if nargin == 0
-                warning('Not enough inputs')
-                return
-            end
             self.dataRoot = dataRoot;
             self = self.loadPeriod(startTime, endTime);
         end
@@ -100,6 +101,88 @@ classdef BridgeProject
                     hasData = ismember(name, self.cableData.Properties.VariableNames);
                 otherwise
                     error("BridgeProject:hasChannel", "Unknown source '%s'", source);
+            end
+        end
+
+        function separateCsvToMatFiles(~, parentFolder)
+            filePattern = fullfile(parentFolder, '**', 'WSDA*.csv');
+            fileList = dir(filePattern);
+
+            for k = 1:length(fileList)
+                sourceFilePath = fullfile(fileList(k).folder, fileList(k).name);
+
+                headerLineCount = BridgeProject.countHeaderLinesUntilDataStart(sourceFilePath);
+                [~, fileHeader] = system(sprintf('head -n %d "%s"', headerLineCount, sourceFilePath));
+
+                accelerationDataStore = datastore(sourceFilePath, ...
+                    'ReadVariableNames', true, ...
+                    'NumHeaderLines', headerLineCount);
+
+                accumulatedData = timetable.empty();
+
+                while hasdata(accelerationDataStore)
+                    chunkTable = read(accelerationDataStore);
+
+                    if ~isdatetime(chunkTable{:, 1})
+                        chunkTable{:, 1} = datetime(chunkTable{:, 1});
+                    end
+
+                    chunkTimetable = table2timetable(chunkTable);
+                    chunkTimes = chunkTimetable.Properties.RowTimes;
+
+                    dateStrings = string(chunkTimes, 'yyyy-MM-dd');
+                    periodLabels = repmat("am", height(chunkTimetable), 1);
+                    periodLabels(hour(chunkTimes) >= 12) = "pm";
+                    chunkKeys = dateStrings + "_" + periodLabels;
+
+                    startIdx = 1;
+                    for i = 2:height(chunkTimetable)
+                        if chunkKeys(i) ~= chunkKeys(i-1)
+                            processAndSave(accumulatedData, chunkTimetable(startIdx:i-1, :));
+                            accumulatedData = timetable.empty();
+                            startIdx = i;
+                        end
+                    end
+
+                    accumulatedData = [accumulatedData; chunkTimetable(startIdx:end, :)];
+                end
+
+                if ~isempty(accumulatedData)
+                    processAndSave(accumulatedData, timetable.empty());
+                end
+            end
+
+            function processAndSave(existingBuffer, newSlice)
+                finalTable = [existingBuffer; newSlice];
+                if isempty(finalTable)
+                    return;
+                end
+
+                startTime = finalTable.Properties.RowTimes(1);
+                endTime = finalTable.Properties.RowTimes(end);
+
+                if year(startTime) <= 1970
+                    return;
+                end
+
+                dayString = string(startTime, 'yyyy-MM-dd');
+                if hour(startTime) < 12
+                    periodTag = "am";
+                else
+                    periodTag = "pm";
+                end
+
+                startTimeTag = string(startTime, 'HHmmss');
+                endTimeTag = string(endTime, 'HHmmss');
+
+                outputFileName = sprintf('WSDA_%s_%s_%s_to_%s.mat', ...
+                    dayString, periodTag, startTimeTag, endTimeTag);
+                outputFullPath = fullfile(parentFolder, outputFileName);
+
+                sensorTimetable = finalTable;
+                sensorTimetable.Properties.UserData = fileHeader;
+
+                save(outputFullPath, 'sensorTimetable');
             end
         end
     end
@@ -349,6 +432,7 @@ classdef BridgeProject
     methods (Access=private,Static)
         function timeTable = readCableWindow(filePath, startTime, endTime)
             warning('off','MATLAB:table:ModifiedAndSavedVarnames');
+
             headerLineCount = BridgeProject.countHeaderLinesUntilDataStart(filePath);
 
             dataDatastore = datastore(filePath, ...
