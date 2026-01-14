@@ -160,16 +160,15 @@ classdef BridgeOverview
         end
     end
     methods (Access = public)           % Plotting functions
-        function plotTimeHistory(self, SignalOutput, TimePeriod)
+        function plotTimeHistory(self, SignalOutput, TimePeriod,plotMode)
             % SignalOutput = 'acceleration', 'velocity', 'displacement'
-            if nargin < 2
-                SignalOutput = 'acceleration';
+            arguments
+                self
+                SignalOutput = 'acceleration'
+                TimePeriod   = []
+                plotMode     = 'normal'
             end
-
-            if nargin < 3
-                TimePeriod = [];
-            end
-
+            
             try
                 checkForNaNs(self);
             catch ME
@@ -177,9 +176,16 @@ classdef BridgeOverview
                 return
             end
 
-            BridgeOverview.plotTime(self.project.bridgeData, ...
-                self.project.cableData, ...
-                TimePeriod, SignalOutput);
+
+            if strcmpi(plotMode,'Vertical')
+                BridgeOverview.plotTimeHistoryVertical(self.project.bridgeData, ...
+                                                       self.project.cableData, ...
+                                                       TimePeriod, SignalOutput);
+            else
+                BridgeOverview.plotTime(self.project.bridgeData, ...
+                                        self.project.cableData, ...
+                                        TimePeriod, SignalOutput);
+            end
         end
         function plotEpsdHistory(self, segmentDurationMinutes,TimePeriod)
             if nargin < 2
@@ -216,6 +222,29 @@ classdef BridgeOverview
             BridgeOverview.plotCablePhaseSpaceStatic(self.project.bridgeData, ...
                 self.project.cableData, TimePeriod);
         end
+        function plotFrequencyResponse(self, TimePeriod, method, opts)
+            arguments
+                self
+                TimePeriod = []
+                method (1,1) string {mustBeMember(method, ["welch", "fft"])} = "welch"
+                opts.windowSec (1,1) double = 60
+                opts.overlapPct (1,1) double = 50
+                opts.fMax (1,1) double = 15
+                opts.bridgeDirs (1,:) string = ["X", "Y", "Z"]
+                opts.cableDirs (1,:) string = ["x", "y"]
+            end
+
+            try
+                self.checkForNaNs();
+            catch ME
+                warning(ME.message);
+                return
+            end
+
+            BridgeOverview.plotFrequencyVertical(self.project.bridgeData, ...
+                self.project.cableData, ...
+                TimePeriod, method, opts);
+        end
         function [Cxy,f,Pxx,Pyy,Pxy] = coherence(self, deckField, cableField, timePeriod, plotCoherence)
             if nargin < 5
                 plotCoherence = false;
@@ -244,7 +273,6 @@ classdef BridgeOverview
         end
         function [peakFreq,coherenceVal,response] = plotHeaveCoherence(self, cableField, selectedTimePeriod, opts)
             %plotHeaveCoherence Plot heave coherence and return peak and queried values
-
             arguments
                 self
                 cableField
@@ -365,7 +393,336 @@ classdef BridgeOverview
                 char(selectedTimePeriod(2),'HH:mm:SS')],...
                 'Interpreter','latex','Fontsize',16)
         end
+        function plotEventValidation(self,ylimits)
+            arguments
+                self
+                ylimits = 'off';
+            end
 
+            weather = self.project.weatherData;
+            cableData = self.project.cableData;
+            cableGroups = findCableGroups(cableData.Properties.VariableNames);
+            cables = cableGroups(:,1);
+
+            colorBlue = [0.45 0.55 0.95];
+            colorTeal = [0.40 0.75 0.70];
+            colorRain = [0.53 0.83 0.96];
+            colorC1W  = [0.65 0.85 0.65];
+            colorC2W  = [0.50 0.50 0.50];
+            markerSize = 60;
+
+            uTable = retime(timetable(weather.WindSpeed.Time, weather.WindSpeed.Data), 'regular', @mean, 'TimeStep', minutes(10));
+            phiTable = retime(timetable(weather.PhiC1.Time, weather.PhiC1.Data), 'regular', @mean, 'TimeStep', minutes(10));
+
+            figure(12);clf
+            theme('light')
+            tLayout = tiledlayout(3, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+            ax1 = nexttile;
+            yyaxis left
+            scatter(uTable.Time, uTable.Var1, markerSize, colorBlue, 'filled', ...
+                'MarkerFaceAlpha', 0.4, 'MarkerEdgeAlpha', 0.6);
+            ylabel('$\bar{u}$ (m/s)', 'Interpreter', 'latex', 'Color', colorBlue);
+            set(gca, 'YColor', colorBlue);
+            if strcmpi(ylimits,'on')
+                ylim([0 20]);
+            end
+
+            yyaxis right
+            scatter(phiTable.Time, phiTable.Var1, markerSize, colorTeal, 'filled', ...
+                'MarkerFaceAlpha', 0.4, 'MarkerEdgeAlpha', 0.6);
+            ylabel('$\Phi$ ($^\circ$)', 'Interpreter', 'latex', 'Color', colorTeal);
+            set(gca, 'YColor', colorTeal);
+            grid on;
+
+            ax2 = nexttile;
+            scatter(weather.RainIntensity.Time, weather.RainIntensity.Data, markerSize, colorRain, 'filled', ...
+                'MarkerFaceAlpha', 0.3, 'MarkerEdgeAlpha', 0.5);
+            ylabel('Rain (mm/h)', 'Interpreter', 'latex');
+            if strcmpi(ylimits,'on')
+                ylim([0 6]);
+            end
+            grid on;
+
+            ax3 = nexttile;
+            hold on;
+            for i = 1:numel(cables)
+                cableName = cables{i};
+                varName = [cableName, '_y'];
+
+                if strcmp(cableName, 'C1W')
+                    c = colorC1W;
+                elseif strcmp(cableName, 'C2W')
+                    c = colorC2W;
+                else
+                    c = [0.2 0.2 0.2];
+                end
+
+                heaveTable = cableData(:, varName);
+                rmsTable = retime(heaveTable, 'regular', @rms, 'TimeStep', minutes(10));
+
+                scatter(rmsTable.Time, rmsTable.(varName), markerSize, c, 'filled', ...
+                    'MarkerFaceAlpha', 0.5, 'MarkerEdgeAlpha', 0.7, 'DisplayName', cableName);
+            end
+            ylabel('$\sigma_{\ddot{r}_y}$ (m/s$^2$)', 'Interpreter', 'latex');
+            legend('Location', 'northeast');
+            if strcmpi(ylimits,'on')
+                ylim([0 20]);
+            end
+            grid on;
+
+            linkaxes([ax1, ax2, ax3], 'x');
+            xtickformat('HH:mm');
+
+            startTimeStr = char(self.project.startTime, 'yyyy-MM-dd');
+            endTimeStr = char(self.project.endTime, 'yyyy-MM-dd');
+            title(tLayout, ['Event Validation: ' startTimeStr ' to ' endTimeStr], ...
+                'Interpreter', 'latex', 'FontSize', 12);
+        end
+        function freqInfo = plotRwivDiagnostic(self, cableField, timePeriod, opts)
+            arguments
+                self
+                cableField (1,1) string
+                timePeriod = []
+                opts.deckFields (1,:) string = ["Conc_Z" "Steel_Z"]
+                opts.fMax (1,1) double = 10
+                opts.windowSec (1,1) double = 60
+                opts.overlapPct (1,1) double = 50
+                opts.coherenceType (1,1) string {mustBeMember(opts.coherenceType, ["wavelet", "normal"])} = "normal"
+                opts.plotTitle
+            end
+
+            % Function to visualize RWIV events by correlating cable vibrations with
+            % environmental weather data and bridge deck accelerations.
+
+            if isempty(timePeriod)
+                timePeriod = [self.project.startTime, self.project.endTime];
+            end
+
+            timeFilter = timerange(timePeriod(1), timePeriod(2));
+            bridgeData = self.project.bridgeData(timeFilter, :);
+            cableData = self.project.cableData(timeFilter, :);
+            weatherData = self.project.weatherData;
+
+            weatherFields = fieldnames(weatherData);
+            for i = 1:numel(weatherFields)
+                fName = weatherFields{i};
+                currentField = weatherData.(fName);
+                if isstruct(currentField) && isfield(currentField, 'Time')
+                    idx = currentField.Time >= timePeriod(1) & currentField.Time <= timePeriod(2);
+                    weatherData.(fName).Time = currentField.Time(idx);
+                    weatherData.(fName).Data = currentField.Data(idx);
+                end
+            end
+
+            fig = figure(7); clf;
+            set(fig, 'Name', 'RWIV Diagnostic', 'NumberTitle', 'off');
+            theme('light')
+            tl=tiledlayout(3, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+            plotEnvironmentalConditions(weatherData);
+            plotTimeHistory(bridgeData, cableData, cableField, opts.deckFields);
+            freqInfo.freqResp = plotFrequencyResponse(bridgeData, cableData, cableField, opts.deckFields, opts.fMax, opts.windowSec, opts.overlapPct);
+
+            if opts.coherenceType == "wavelet"
+                plotWaveletCoherence(bridgeData, cableData, cableField, opts.deckFields(1), opts.fMax);
+                freqInfo.coCoherence = struct;
+            else
+                freqInfo.coCoherence = plotFullCoherence(bridgeData, cableData, cableField, opts.deckFields, opts.fMax, opts.windowSec, opts.overlapPct);
+            end
+
+            if ~isempty(opts.plotTitle)
+                title(tl,opts.plotTitle)
+            end
+
+            function plotEnvironmentalConditions(weather)
+                nexttile(1);
+                yyaxis left
+                plot(weather.RainIntensity.Time, weather.RainIntensity.Data, 'o-', 'Color', [0.3 0.6 1]);
+                ylabel('Rain (mm/h)'); title('Environmental Conditions'); grid on;
+                ylim([0 inf])
+                yyaxis right
+                windTable = timetable(weather.UNormalC1.Time, weather.UNormalC1.Data);
+                window = minutes(10);
+                meanWind = retime(windTable, 'regular', @mean, 'TimeStep', window);
+                stdWind  = retime(windTable, 'regular', @std, 'TimeStep', window);
+                turbIntensity = stdWind.Var1 ./ meanWind.Var1;
+                turbIntensity(meanWind.Var1 < 5) = NaN; %Excluding cases where wind speed is below 5
+                plot(meanWind.Time(1:end-1), turbIntensity(1:end-1), 's-', 'Color', [0.85 0.33 0.1], 'MarkerFaceColor', [0.85 0.33 0.1]);
+                ylabel('Turbulence Intensity (-)', 'Interpreter', 'latex');
+                ylim([0 0.5]);
+
+                nexttile(3);
+                yyaxis left
+                plot(weather.UNormalC1.Time, weather.UNormalC1.Data);
+                ylabel('Wind Speed (m/s)');
+                yyaxis right
+                scatter(weather.PhiC1.Time, weather.PhiC1.Data, 15, 'filled', 'MarkerFaceAlpha', 0.3);
+                ylabel('Wind Direction (^\circ)');
+                ylim([0 360]); yticks(0:90:360); grid on;
+                title('Wind angle on C1')
+
+                windroseAx = nexttile(5);
+                hold off
+
+                Options = {'anglenorth', 0, ...
+                    'angleeast', 90, ...
+                    'labels', {'N (0°)','30°','60°','E (90°)','120°','150°','S (180°)','210°','240°','W (270°)','300°','330°'}, ...
+                    'freqlabelangle', 'auto', ...
+                    'legendtype', 2, ...
+                    'TitleString', {'Wind Rose & Bridge Axis'; ''}, ...
+                    'min_radius', 0.1};
+
+                WindRose(weather.WindDir.Data, weather.WindSpeed.Data, [Options, {'axes', windroseAx}]);
+
+                bridgeAngle = 360-18;
+                hold(windroseAx, 'on');
+                r = max(abs(xlim(windroseAx)));
+                th = deg2rad(90 - bridgeAngle);
+                [x, y] = pol2cart([th, th + pi], [r, r]);
+                plot(windroseAx, x, y, 'k', 'LineWidth', 3, 'HandleVisibility', 'off');
+
+                lgd = findobj(gcf, 'Type', 'Legend');
+                if ~isempty(lgd)
+                    lgd(1).Units = 'normalized';
+                    lgd(1).Location = 'none';
+                    pos = lgd(1).Position;
+                    pos(1) = pos(1) + 0.03;
+                    pos(2) = pos(2) + 0.02;
+                    lgd(1).Position = pos;
+                end
+            end
+
+            function plotTimeHistory(bTable, cTable, cField, dFields)
+                nexttile(2);
+                plot(cTable.Time, cTable.(cField), 'LineWidth', 1.1, 'DisplayName', strrep(cField,'_',' '));
+                hold on;
+                for field = dFields
+                    plot(bTable.Time, bTable.(field), 'DisplayName', strrep(field, '_', ' '));
+                end
+                ylabel('Acc. (m/s^2)'); title('Time History'); grid on;
+                legend('Location', 'northeast'); axis tight;
+            end
+
+            function freqResp = plotFrequencyResponse(bTable, cTable, cField, dFields, fLimit, winSec, overlapPct)
+                nexttile(4);
+                fsB = 1/median(diff(seconds(bTable.Time - bTable.Time(1))));
+                fsC = 1/median(diff(seconds(cTable.Time - cTable.Time(1))));
+                [pC, fC] = pwelch(double(cTable.(cField)), hamming(round(winSec*fsC)), round(winSec*fsC*overlapPct/100), [], fsC);
+                semilogy(fC, pC, 'LineWidth', 1.2, 'DisplayName', strrep(cField,'_',' ')); hold on;
+                freqResp = struct;
+                for field = dFields
+                    [pB, fB] = pwelch(double(bTable.(field)), hamming(round(winSec*fsB)), round(winSec*fsB*overlapPct/100), [], fsB);
+                    semilogy(fB, pB, 'DisplayName', strrep(field, '_', ' '));
+                    freqResp.(field).frequency = fB;
+                    freqResp.(field).response = pB;
+                end
+                xlim([0 fLimit]); grid on;
+                ylabel('PSD ((m/s^2)^2/Hz)'); xlabel('Freq. (Hz)');
+                title('Frequency Response'); legend('Location', 'northeast');
+                addCableFrequencyLines();
+            end
+
+            function coCoherence = plotFullCoherence(deckTable, cableTable, cableField, deckFields, fLimit, windowSeconds, overlapPercent)
+                % Calculates and plots co-coherence between cable-deck and deck-deck pairs for Bybrua data.
+                nexttile(6);
+                hold on;
+
+                fsDeck = 1 / median(diff(seconds(deckTable.Time - deckTable.Time(1))));
+                fsCable = 1 / median(diff(seconds(cableTable.Time - cableTable.Time(1))));
+                commonFs = min(fsDeck, fsCable);
+
+                t1 = max(deckTable.Time(1), cableTable.Time(1));
+                t2 = min(deckTable.Time(end), cableTable.Time(end));
+                commonTime = (t1 : seconds(1 / commonFs) : t2)';
+
+                cableSub = retime(cableTable(:, cableField), commonTime, 'linear');
+                windowLength = round(windowSeconds * commonFs);
+                overlapSamples = round(windowLength * overlapPercent / 100);
+
+                coCoherence = struct;
+
+                for i = 1:length(deckFields)
+                    deckField = deckFields{i};
+                    deckSub = retime(deckTable(:, deckField), commonTime, 'linear');
+
+                    [gamma, f] = calculateCoCoherence(deckSub.(deckField), cableSub.(cableField), windowLength, overlapSamples, commonFs);
+
+                    displayName = sprintf('\\gamma: %s - %s', strrep(cableField, '_', ' '), strrep(deckField, '_', ' '));
+                    plot(f, gamma, 'LineWidth', 1.2, 'DisplayName', displayName);
+
+                    coCoherence.(deckField).gamma = gamma;
+                    coCoherence.(deckField).frequency = f;
+                end
+
+                if length(deckFields) > 1
+                    for i = 1:length(deckFields)
+                        for j = i+1:length(deckFields)
+                            fieldA = deckFields{i};
+                            fieldB = deckFields{j};
+
+                            subA = retime(deckTable(:, fieldA), commonTime, 'linear');
+                            subB = retime(deckTable(:, fieldB), commonTime, 'linear');
+
+                            [gammaDeck, fDeck] = calculateCoCoherence(subA.(fieldA), subB.(fieldB), windowLength, overlapSamples, commonFs);
+
+                            displayName = sprintf('\\gamma: %s - %s', strrep(fieldA, '_', ' '), strrep(fieldB, '_', ' '));
+                            plot(fDeck, gammaDeck, '--', 'LineWidth', 1.0, 'DisplayName', displayName);
+                        end
+                    end
+                end
+
+                formatCoherencePlot(fLimit);
+                addCableFrequencyLines();
+            end
+
+            function [gamma, f] = calculateCoCoherence(sigA, sigB, nWin, nOver, fs)
+                % Core calculation for the real part of the complex coherence.
+                [Pxy, f] = cpsd(double(sigA), double(sigB), hamming(nWin), nOver, [], fs);
+                [Pxx, ~] = pwelch(double(sigA), hamming(nWin), nOver, [], fs);
+                [Pyy, ~] = pwelch(double(sigB), hamming(nWin), nOver, [], fs);
+                gamma = real(Pxy ./ sqrt(Pxx .* Pyy));
+            end
+
+            function formatCoherencePlot(fLimit)
+                % Applies standard formatting to the coherence plot.
+                xlim([0 fLimit]);
+                ylim([-1 1]);
+                grid on;
+                xlabel('Freq. (Hz)');
+                ylabel('Coherence');
+                legend('Location', 'northeast', 'Interpreter', 'tex', 'FontSize', 8);
+                title('Co-coherence Analysis');
+            end
+
+            function addCableFrequencyLines()
+                % Adds vertical indicators for Bybrua cable natural frequencies.
+                cableFrequencies = [3.111 4.149 6.24];
+                xline(cableFrequencies(1), '--k', 'LineWidth', 2, 'DisplayName', 'Cable Nat. Freq.');
+                if length(cableFrequencies) > 1
+                    xline(cableFrequencies(2:end), '--k', 'LineWidth', 2, 'HandleVisibility', 'off');
+                end
+            end
+
+            function plotWaveletCoherence(bTable, cTable, cField, dField, fLimit)
+                nexttile(6);
+                fsB = 1/median(diff(seconds(bTable.Time - bTable.Time(1))));
+                fsC = 1/median(diff(seconds(cTable.Time - cTable.Time(1))));
+                resampleFs = min(fsB, fsC);
+                t1 = max(bTable.Time(1), cTable.Time(1));
+                t2 = min(bTable.Time(end), cTable.Time(end));
+                commonTime = (t1 : seconds(1/resampleFs) : t2)';
+                bSub = retime(bTable(:, dField), commonTime, 'linear');
+                cSub = retime(cTable(:, cField), commonTime, 'linear');
+                [wcoh, ~, fVec, coi] = wcoherence(bSub.(dField), cSub.(cField), resampleFs);
+                imagesc(commonTime, fVec, wcoh);
+                set(gca, 'YDir', 'normal'); hold on;
+                fill([commonTime(1); commonTime(:); commonTime(end)], [0; coi(:); 0], 'w', 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+                plot(commonTime, coi, 'w--', 'LineWidth', 1.5);
+                ylim([0 fLimit]); ylabel('Freq. (Hz)');
+                colorbar; title(sprintf('Wavelet: %s', strrep(dField, '_', ' ')));
+            end
+        end
     end
     methods (Access = private)          % Filter Helpers
         function fs = defaultSamplingRate(self,fsIn)
@@ -617,58 +974,55 @@ classdef BridgeOverview
             title(tiles, periodTitle, 'Interpreter','latex')
         end
         function plotTime(BridgeData,CableData,TimePeriod,convert2DispOrVel)
-
             if nargin > 2 && ~isempty(TimePeriod)
                 range = timerange(TimePeriod(1),TimePeriod(2));
                 CableData  = CableData(range,:);
                 BridgeData = BridgeData(range,:);
             end
 
-            if nargin < 4
-                convert2DispOrVel = [];
+            if nargin < 4 || isempty(convert2DispOrVel)
+                convert2DispOrVel = 'acceleration';
             end
 
-            if ~isempty(convert2DispOrVel) && ~strcmpi(convert2DispOrVel,'acceleration')
+            if ~strcmpi(convert2DispOrVel,'acceleration')
                 [BridgeData,CableData] = BridgeOverview.convertAcceleration(BridgeData,CableData,convert2DispOrVel);
                 switch lower(convert2DispOrVel)
                     case 'displacement'
-                        unitDef = '\mathrm{';
-                        unit    = 'm';
+                        unitDef = '\mathrm{'; unit = 'm';
                     case 'velocity'
-                        unitDef = '\dot{';
-                        unit    = 'm/s';
+                        unitDef = '\dot{'; unit = 'm/s';
                     otherwise
-                        unitDef = '\ddot{';
-                        unit    = 'm/s$^2$';
+                        unitDef = '\ddot{'; unit = 'm/s$^2$';
                 end
             else
-                unitDef = '\ddot{';
-                unit    = 'm/s$^2$';
+                unitDef = '\ddot{'; unit = 'm/s$^2$';
             end
 
             cableGroups = findCableGroups(CableData.Properties.VariableNames);
-            numberOfCableGroups  = size(cableGroups,1);
-            numberOfBridgeGroups = size(BridgeData.Properties.VariableNames,2)/3;
+            numCableG   = size(cableGroups,1);
+            numBridgeG  = size(BridgeData.Properties.VariableNames,2)/3;
 
             fig = figure(1); clf;
             theme(fig,"light")
-            [tiles,nexttileRowCol] = tiledlayoutRowCol(3,numberOfBridgeGroups+numberOfCableGroups, ...
-                "TileSpacing","compact","Padding","compact");
+
+            totalCols = numBridgeG + numCableG;
+            tiles = tiledlayout(3, totalCols, 'TileSpacing', 'compact', 'Padding', 'compact');
 
             deckTypes  = {'Conc','Steel'};
             deckTitles = {'Concrete deck','Steel deck'};
             dirs       = {'X','Y','Z'};
             dirLatex   = {'x','y','z'};
 
-
-            for d = 1:numberOfBridgeGroups
-                for k = 1:numel(dirs)
-                    nexttileRowCol(k,d);
-                    varName = sprintf('%s_%s',deckTypes{d},dirs{k});
-                    plot(BridgeData.Time,BridgeData.(varName));
+            bridgeAxes = gobjects(0);
+            for d = 1:numBridgeG
+                for k = 1:3
+                    ax = nexttile((k-1)*totalCols + d);
+                    bridgeAxes(end+1) = ax;
+                    varName = sprintf('%s_%s', deckTypes{d}, dirs{k});
+                    plot(BridgeData.Time, BridgeData.(varName));
                     axis tight
                     if d == 1
-                        ylabel(['$' unitDef dirLatex{k} '}$ (' unit ')'],'Interpreter','latex')
+                        ylabel(['$' unitDef dirLatex{k} '}$ (' unit ')'], 'Interpreter', 'latex')
                     end
                     if k == 1
                         title(deckTitles{d})
@@ -676,34 +1030,40 @@ classdef BridgeOverview
                 end
             end
 
-            ylabel(tiles,'Time','Interpreter','none')
-
-            for ii = 1:numberOfCableGroups
+            cableAxes = gobjects(0);
+            for ii = 1:numCableG
                 cableName = cableGroups{ii,1};
                 cableDirs = cableGroups{ii,2};
+                colIdx = numBridgeG + ii;
                 for jj = 1:numel(cableDirs)
-                    nexttileRowCol(jj,2+ii);
-                    dirChar = char(cableDirs(jj));
-                    varName = cableName + "_" + dirChar;
+                    ax = nexttile((jj-1)*totalCols + colIdx);
+                    cableAxes(end+1) = ax;
+                    varName = cableName + "_" + char(cableDirs(jj));
                     plot(CableData.Time, CableData.(varName));
                     axis tight
                     if jj == 1
-                        title(cableName)
+                        title(cableName, 'Interpreter', 'none')
                     end
                 end
             end
 
-            axesHandles = findall(fig,'Type','axes');
-            BridgeOverview.setTimeTicks(axesHandles,BridgeData.Time)
-            BridgeOverview.setGlobalYLimits(axesHandles)
+            allAxes = [bridgeAxes, cableAxes];
+            linkaxes(allAxes, 'x');
 
-            t1 = char(string(min(BridgeData.Time),"uuuu-MM-dd HH:mm:ss"));
-            t2 = char(string(max(BridgeData.Time),"uuuu-MM-dd HH:mm:ss"));
+            BridgeOverview.setTimeTicks(allAxes, BridgeData.Time)
 
-            periodTitle = ['Plotted period: ' ...
-                t1 '  $\rightarrow$  ' t2];
+            if ~isempty(bridgeAxes)
+                BridgeOverview.setGlobalYLimits(bridgeAxes)
+            end
+            if ~isempty(cableAxes)
+                BridgeOverview.setGlobalYLimits(cableAxes)
+            end
 
-            title(tiles, periodTitle, 'Interpreter','latex')
+            t1 = string(min(BridgeData.Time), "uuuu-MM-dd HH:mm:ss");
+            t2 = string(max(BridgeData.Time), "uuuu-MM-dd HH:mm:ss");
+            periodTitle = "Plotted period: " + t1 + " $\rightarrow$ " + t2;
+            title(tiles, periodTitle, 'Interpreter', 'latex')
+            xlabel(tiles, 'Time')
         end
         function [BridgeData,CableData] = convertAcceleration(BridgeData,CableData,convert2DispOrVel)
             if strcmpi(convert2DispOrVel,'displacement')
@@ -745,59 +1105,59 @@ classdef BridgeOverview
             timeEnd   = max(timeVec);
             spanHours = hours(timeEnd - timeStart);
 
-            if     spanHours <= .5
+            if spanHours <= .5
                 step = minutes(2);
             elseif spanHours <= 2
                 step = minutes(10);
             elseif spanHours <= 6
                 step = minutes(30);
             elseif spanHours <= 25
-                step = hours(5);
+                step = hours(1); 
             elseif spanHours <= 72
-                step = hours(10);
+                step = hours(6); 
             else
                 step = days(1);
             end
 
-            plotSpan = timeEnd-timeStart;
-            if      plotSpan <= hours(1)
+            plotSpan = timeEnd - timeStart;
+            if plotSpan <= hours(1)
                 shiftUnit = 'minute';
-            elseif  plotSpan <= days(1.1)
+            elseif plotSpan <= days(1.1)
                 shiftUnit = 'hour';
-            elseif  plotSpan <= weeks(1)
+            elseif plotSpan <= weeks(1)
                 shiftUnit = 'day';
             else
                 shiftUnit = 'month';
             end
 
-            tickStart = dateshift(timeStart,'start',shiftUnit);
-            tickEnd   = dateshift(timeEnd,'start',shiftUnit);
+            tickStart = dateshift(timeStart, 'start', shiftUnit);
+
+            tickEnd = dateshift(timeEnd, 'end', shiftUnit);
             tickTimes = tickStart:step:tickEnd;
 
+            tickTimes = tickTimes(tickTimes <= (timeEnd + step/2));
+
             if spanHours < 25
-                tickFormatDatetime = 'HH:mm';      % datetime format
-                tickFormatDatenum  = 'HH:MM';      % datetick format (MM = minutes)
+                tickFormatDatetime = 'HH:mm';
+                tickFormatDatenum  = 'HH:MM';
             else
                 tickFormatDatetime = 'MM-dd HH:mm';
-                tickFormatDatenum  = 'mm-dd HH:MM'; % datetick format (mm = month)
+                tickFormatDatenum  = 'mm-dd HH:MM';
             end
 
-            for ax = reshape(axesHandles,1,[])
-                xl = xlim(ax);
-                if isempty(xl) || all(ismissing(xl))
-                    continue
-                end
+            for ax = reshape(axesHandles, 1, [])
+                if ~isvalid(ax), continue; end
 
-                % numeric datenum axis
-                if isnumeric(xl)
+                if isnumeric(ax.XLim)
                     ax.XTick = datenum(tickTimes);
-                    datetick(ax,'x',tickFormatDatenum,'keeplimits','keepticks');
+                    datetick(ax, 'x', tickFormatDatenum, 'keeplimits', 'keepticks');
                 else
+                    % For datetime rulers (standard in modern MATLAB)
                     ax.XTick = tickTimes;
                     ax.XAxis.TickLabelFormat = tickFormatDatetime;
                 end
 
-                if length(axesHandles) > 1
+                if numel(axesHandles) > 1
                     ax.XAxis.SecondaryLabel.Visible = 'off';
                 end
             end
@@ -902,6 +1262,205 @@ classdef BridgeOverview
             t2 = char(string(max(cableData.Time),"uuuu-MM-dd HH:mm:ss"));
             title(tiles, ['Cable phase space: ' t1 '  $\rightarrow$  ' t2], 'Interpreter','latex')
         end
+        function plotTimeHistoryVertical(BridgeData, CableData, TimePeriod, convert2DispOrVel)
+            if nargin > 2 && ~isempty(TimePeriod)
+                range = timerange(TimePeriod(1),TimePeriod(2));
+                CableData  = CableData(range,:);
+                BridgeData = BridgeData(range,:);
+            end
 
+            if nargin < 4 || isempty(convert2DispOrVel)
+                convert2DispOrVel = 'acceleration';
+            end
+
+            if ~strcmpi(convert2DispOrVel, 'acceleration')
+                [BridgeData, CableData] = BridgeOverview.convertAcceleration(BridgeData, CableData, convert2DispOrVel);
+                switch lower(convert2DispOrVel)
+                    case 'displacement'
+                        unitDef = '\mathrm{u'; unit = 'm'; labelName = 'Displacement';
+                    case 'velocity'
+                        unitDef = '\dot{u'; unit = 'm/s'; labelName = 'Velocity';
+                    otherwise
+                        unitDef = '\ddot{u'; unit = 'm/s$^2$'; labelName = 'Acceleration';
+                end
+            else
+                unitDef = '\ddot{u'; unit = 'm/s$^2$'; labelName = 'Acceleration';
+            end
+
+            cableGroups = findCableGroups(CableData.Properties.VariableNames);
+            numCableG   = size(cableGroups, 1);
+            numBridgeG  = size(BridgeData.Properties.VariableNames, 2) / 3;
+
+            deckTypes  = {'Conc', 'Steel'};
+            deckTitles = {'Concrete deck', 'Steel deck'};
+            dirs       = {'X', 'Y', 'Z'};
+            colors     = [0 0.4470 0.7410; 0.8500 0.3250 0.0980; 0.9290 0.6940 0.1250];
+
+            fig = figure(1); clf;
+            theme(fig, "light")
+            totalPositions = numBridgeG + numCableG;
+            tiles = tiledlayout(totalPositions, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+            allAxes = gobjects(0);
+            for d = 1:numBridgeG
+                ax = nexttile;
+                allAxes(end+1) = ax;
+                hold(ax, 'on');
+                amps = zeros(3,1);
+                for k = 1:3
+                    varName = sprintf('%s_%s', deckTypes{d}, dirs{k});
+                    amps(k) = max(BridgeData.(varName)) - min(BridgeData.(varName));
+                end
+                [~, drawOrder] = sort(amps, 'descend');
+                for idx = drawOrder'
+                    varName = sprintf('%s_%s', deckTypes{d}, dirs{idx});
+                    plot(BridgeData.Time, BridgeData.(varName), 'Color', colors(idx,:), 'LineWidth', 0.8);
+                end
+                title(deckTitles{d})
+                axis tight
+            end
+
+            for ii = 1:numCableG
+                ax = nexttile;
+                allAxes(end+1) = ax;
+                hold(ax, 'on');
+                cableName = cableGroups{ii,1};
+                cableDirs = cableGroups{ii,2};
+                amps = zeros(numel(cableDirs), 1);
+                for jj = 1:numel(cableDirs)
+                    varName = cableName + "_" + char(cableDirs(jj));
+                    amps(jj) = max(CableData.(varName)) - min(CableData.(varName));
+                end
+                [~, drawOrder] = sort(amps, 'descend');
+                for idx = drawOrder'
+                    dirChar = char(cableDirs(idx));
+                    colorIdx = find(strcmpi(dirs, dirChar));
+                    varName = cableName + "_" + dirChar;
+                    plot(CableData.Time, CableData.(varName), 'Color', colors(colorIdx,:), 'LineWidth', 0.8);
+                end
+                title(cableName, 'Interpreter', 'none')
+                axis tight
+            end
+
+            ylabel(tiles, [labelName ' $' unitDef '}$ (' unit ')'], 'Interpreter', 'latex')
+            xlabel(tiles, 'Time')
+
+            legend(allAxes(end), dirs);
+            linkaxes(allAxes, 'x');
+            BridgeOverview.setTimeTicks(allAxes, BridgeData.Time);
+
+            t1 = string(min(BridgeData.Time), "uuuu-MM-dd HH:mm:ss");
+            t2 = string(max(BridgeData.Time), "uuuu-MM-dd HH:mm:ss");
+            title(tiles, "Plotted period: " + t1 + " $\rightarrow$ " + t2, 'Interpreter', 'latex')
+        end
+        function plotFrequencyVertical(BridgeData, CableData, TimePeriod, method, opts)
+            if nargin > 2 && ~isempty(TimePeriod)
+                range = timerange(TimePeriod(1), TimePeriod(2));
+                CableData  = CableData(range,:);
+                BridgeData = BridgeData(range,:);
+            end
+
+            cableGroups = findCableGroups(CableData.Properties.VariableNames);
+            numCableG   = size(cableGroups, 1);
+            numBridgeG  = size(BridgeData.Properties.VariableNames, 2) / 3;
+
+            deckTypes  = {'Conc', 'Steel'};
+            deckTitles = {'Concrete deck', 'Steel deck'};
+            dirs       = {'X', 'Y', 'Z'}; % Master list for legend
+            colors     = [0 0.4470 0.7410; 0.8500 0.3250 0.0980; 0.9290 0.6940 0.1250];
+            fs = 1/median(diff(seconds(BridgeData.Time - BridgeData.Time(1))));
+
+            fig = figure(6); clf;
+            theme(fig, "light")
+            totalPos = numBridgeG + numCableG;
+            tiles = tiledlayout(totalPos, 1, 'TileSpacing', 'compact', 'Padding', 'compact');
+            allAxes = gobjects(0);
+
+            function [f, p] = getPSD(data, fs, method, opts)
+                if method == "welch"
+                    wLen = round(opts.windowSec * fs);
+                    nOver = round(wLen * (opts.overlapPct/100));
+                    [p, f] = pwelch(double(data), hamming(wLen), nOver, [], fs);
+                else
+                    N = length(data);
+                    xdft = fft(double(data));
+                    xdft = xdft(1:floor(N/2)+1);
+                    p = (1/(fs*N)) * abs(xdft).^2;
+                    p(2:end-1) = 2*p(2:end-1);
+                    f = 0:fs/N:fs/2;
+                end
+            end
+
+            for d = 1:numBridgeG
+                ax = nexttile; allAxes(end+1) = ax; hold(ax, 'on');
+                set(ax, 'YScale', 'log');
+                psdStore = cell(1,3); peakAmps = zeros(3,1);
+                activeDirs = false(1,3);
+
+                for k = 1:3
+                    if ~any(strcmpi(dirs{k}, opts.bridgeDirs)), continue; end
+                    varName = sprintf('%s_%s', deckTypes{d}, dirs{k});
+                    [f, p] = getPSD(BridgeData.(varName), fs, method, opts);
+                    psdStore{k} = p;
+                    peakAmps(k) = max(p(f <= opts.fMax));
+                    activeDirs(k) = true;
+                end
+
+                [~, drawOrder] = sort(peakAmps, 'descend');
+                for idx = drawOrder'
+                    if ~activeDirs(idx), continue; end
+                    semilogy(f, psdStore{idx}, 'Color', colors(idx,:), 'LineWidth', 0.8, 'DisplayName', dirs{idx});
+                end
+                title(deckTitles{d}); grid on; xlim([0 opts.fMax]);
+            end
+
+            for ii = 1:numCableG
+                ax = nexttile; allAxes(end+1) = ax; hold(ax, 'on');
+                set(ax, 'YScale', 'log');
+                cableName = cableGroups{ii,1};
+                availCableDirs = cableGroups{ii,2};
+                psdStore = cell(1, numel(availCableDirs)); peakAmps = zeros(numel(availCableDirs), 1);
+                activeCableDirs = false(1, numel(availCableDirs));
+
+                for jj = 1:numel(availCableDirs)
+                    dirChar = char(availCableDirs(jj));
+                    if ~any(strcmpi(dirChar, opts.cableDirs)), continue; end
+
+                    varName = cableName + "_" + dirChar;
+                    [f, p] = getPSD(CableData.(varName), fs, method, opts);
+                    psdStore{jj} = p;
+                    peakAmps(jj) = max(p(f <= opts.fMax));
+                    activeCableDirs(jj) = true;
+                end
+
+                [~, drawOrder] = sort(peakAmps, 'descend');
+                for idx = drawOrder'
+                    if ~activeCableDirs(idx), continue; end
+                    dirChar = char(availCableDirs(idx));
+                    colorIdx = find(strcmpi(dirs, dirChar));
+                    semilogy(f, psdStore{idx}, 'Color', colors(colorIdx,:), 'LineWidth', 0.8, 'DisplayName', dirChar);
+                end
+                title(cableName, 'Interpreter', 'none'); grid on; xlim([0 opts.fMax]);
+            end
+
+            % Link ONLY the X-axis for time/frequency synchronization
+            linkaxes(allAxes, 'x');
+
+            ylabel(tiles, 'PSD ((m/s$^2$)$^2$/Hz)', 'Interpreter', 'latex');
+            xlabel(tiles, 'Frequency (Hz)', 'Interpreter', 'latex');
+
+            % FIX: Create a dummy axis or use the last plot to force a complete legend
+            % We ensure all directions from the master list 'dirs' are represented
+            hold(allAxes(end), 'on');
+            dummy_h = gobjects(3,1);
+            for k = 1:3
+                dummy_h(k) = semilogy(allAxes(end), NaN, NaN, 'Color', colors(k,:), 'LineWidth', 0.8, 'DisplayName', dirs{k});
+            end
+            legend(allAxes(end), dummy_h, 'Location', 'northeast', 'Interpreter', 'latex');
+
+            t1 = string(min(BridgeData.Time), "uuuu-MM-dd HH:mm:ss");
+            t2 = string(max(BridgeData.Time), "uuuu-MM-dd HH:mm:ss");
+            title(tiles, "PSD via " + upper(method) + " | Period: " + t1 + " $\rightarrow$ " + t2, 'Interpreter', 'latex');
+        end
     end
 end

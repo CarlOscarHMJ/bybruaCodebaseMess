@@ -20,11 +20,11 @@ classdef BridgeProject
             end
 
             if ischar(startTime) || isstring(startTime)
-                startTime = datetime(startTime,'InputFormat','yyyy-MM-dd');
+                startTime = datetime(startTime,'InputFormat','yyyy-MM-dd HH:mm');
             end
 
             if ischar(endTime) || isstring(endTime)
-                endTime = datetime(endTime, 'InputFormat', 'yyyy-MM-dd') + days(1) - milliseconds(1);
+                endTime = datetime(endTime, 'InputFormat', 'yyyy-MM-dd HH:mm');
             end
 
             self.dataRoot = dataRoot;
@@ -40,6 +40,8 @@ classdef BridgeProject
             tic
             self.cableData  = self.loadCableData(self.startTime, self.endTime);
             fprintf('Loaded cable data in %3.1f seconds\n',toc)
+
+            self = self.transformWeatherData();
             self.loadTime = datetime('now');
         end
 
@@ -188,12 +190,26 @@ classdef BridgeProject
     end
 
     methods (Access = private) % Bridgedata Loading
-        function [bridgeData,weatherData] = loadBridgeData(self, startTime, endTime)
-            dates = allDatesBetween(startTime,endTime);
-            self.rawFiles = FindLocalBridgeDataFiles(self.dataRoot, string(dates,'yyyy-MM-dd'));
+        function [bridgeData, weatherData] = loadBridgeData(self, startTime, endTime)
+            % loadBridgeData locates daily files and slices the resulting data to the exact interval.
+            dates = allDatesBetween(startTime, endTime);
+            self.rawFiles = FindLocalBridgeDataFiles(self.dataRoot, string(dates, 'yyyy-MM-dd'));
 
-            MergedStructData = loadAndMergeBridgeData(self);
-            [bridgeData,weatherData] = splitBridgeData(self,MergedStructData);
+            mergedStructData = loadAndMergeBridgeData(self);
+            [bridgeData, weatherData] = splitBridgeData(self, mergedStructData);
+
+            bridgeData = bridgeData(timerange(startTime, endTime), :);
+
+            weatherFields = fieldnames(weatherData);
+            for i = 1:numel(weatherFields)
+                fieldName = weatherFields{i};
+                if isfield(weatherData.(fieldName), 'Time')
+                    timeMask = weatherData.(fieldName).Time >= startTime & ...
+                        weatherData.(fieldName).Time <= endTime;
+                    weatherData.(fieldName).Time = weatherData.(fieldName).Time(timeMask);
+                    weatherData.(fieldName).Data = weatherData.(fieldName).Data(timeMask);
+                end
+            end
         end
 
         function DailyData = loadAndMergeBridgeData(self)
@@ -269,152 +285,86 @@ classdef BridgeProject
 
     methods (Access = private) % Cabledata Loading
         function cableData = loadCableData(self, startTime, endTime)
-            cableDataRoot = fullfile(self.dataRoot,'WSDA_data');
-            filesToLoad = findCableFilesInPeriod(self,cableDataRoot,startTime,endTime);
-            cableData = loadAndAppendCableData(self,filesToLoad,startTime,endTime);
-            if isempty(cableData)
-                warning('No cabledata found for this time period')
-                cableData = timetable(); return
+            % loadCableData Loads pre-processed cable .mat files and applies calibration
+            cableDataRoot = fullfile(self.dataRoot, 'WSDA_data');
+            filesToLoad = self.findCableMatFiles(cableDataRoot, startTime, endTime);
+
+            if isempty(filesToLoad)
+                warning('No cable data files found for the selected period.')
+                cableData = timetable();
+                return
             end
-            cableData = applyCableCalibration(self,cableData);
+
+            cableData = self.loadAndFilterMatFiles(filesToLoad, startTime, endTime);
+
+            if isempty(cableData)
+                warning('No cable data records overlap the specific time interval.')
+                return
+            end
+
+            cableData = applyCableCalibration(self, cableData);
             cableData = CableDataShift2GlbalCoords(cableData);
             cableData = BridgeProject.RemoveDuplicates(cableData);
         end
-        function files = findCableFilesInPeriod(~,cableDataRoot,startTime,endTime)
-            if ischar(startTime) || isstring(startTime)
-                startTime = datetime(startTime,'InputFormat','yyyy-MM-dd''T''HH:mm:ss');
-            end
-            if ischar(endTime) || isstring(endTime)
-                endTime = datetime(endTime,'InputFormat','yyyy-MM-dd''T''HH:mm:ss');
-            end
 
-            files = dir(fullfile(cableDataRoot,'**','*.csv'));
-            nFiles = numel(files);
-
-            starts = NaT(1,nFiles);
-            ends   = NaT(1,nFiles);
-
-            for k = 1:nFiles
-                fpath = fullfile(files(k).folder,files(k).name);
-                [tStart,tEnd] = getFileSpan(fpath);
-                starts(k) = tStart;
-                ends(k)   = tEnd;
+        function files = findCableMatFiles(~, folder, t0, t1)
+            % findCableMatFiles Identifies relevant .mat files based on filename timestamps
+            allFiles = dir(fullfile(folder, 'WSDA_*.mat'));
+            if isempty(allFiles)
+                files = [];
+                return
             end
 
-            valid = ~isnat(starts) & ~isnat(ends);
-            files  = files(valid);
-            starts = starts(valid);
-            ends   = ends(valid);
+            pattern = 'WSDA_(\d{4}-\d{2}-\d{2})_[ap]m_(\d{6})_to_(\d{6})\.mat';
+            matches = regexp({allFiles.name}, pattern, 'tokens', 'once');
+            validIdx = ~cellfun(@isempty, matches);
 
-            mask = startTime <= ends & starts < endTime;
-            files  = files(mask);
-            starts = starts(mask);
+            allFiles = allFiles(validIdx);
+            matches = matches(validIdx);
 
-            [~,idx] = sort(starts);
-            files = files(idx);
+            fileStarts = NaT(1, numel(allFiles));
+            fileEnds = NaT(1, numel(allFiles));
 
-            function [tStart,tEnd] = getFileSpan(csvPath)
-                tStart = NaT;
-                tEnd   = NaT;
-                errormessage = sprintf('Error checking file in: %s\n Returning empty times',csvPath);
+            for i = 1:numel(matches)
+                dateStr = matches{i}{1};
+                startStr = matches{i}{2};
+                endStr = matches{i}{3};
 
-                [status,out] = system(sprintf('head -n 50 "%s"', csvPath));
-                if status ~= 0
-                    warning(errormessage)
-                    return
-                end
-
-                lines = splitlines(string(out));
-                idx = find(strtrim(lines) == "DATA_START",1);
-                if isempty(idx) || idx+2 > numel(lines)
-                    warning(errormessage)
-                    return
-                end
-
-                Num2EnsureCorrectDate = 1;
-                while isnat(tStart) || tStart < datetime(2018,1,1)
-                    Num2EnsureCorrectDate = Num2EnsureCorrectDate + 1;
-                    firstDataLine = char(lines(idx+Num2EnsureCorrectDate));
-                    commaPos = find(firstDataLine == ',',1,'first');
-                    if isempty(commaPos)
-                        warning(errormessage)
-                        return
-                    end
-
-                    timeStr = strtrim(extractBefore(firstDataLine,commaPos));
-                    try
-                        tStart = datetime(timeStr,"InputFormat","MM/dd/yyyy HH:mm:ss.SSSSSSSSS");
-                    catch
-                        warning(errormessage)
-                        tStart = NaT;
-                        tEnd   = NaT;
-                        return
-                    end
-                end
-
-                [status,out] = system(sprintf('tail -n 1 "%s"', csvPath));
-                if status ~= 0
-                    tStart = NaT;
-                    tEnd   = NaT;
-                    warning(errormessage)
-                    return
-                end
-
-                lastLine = strtrim(out);
-                commaPos = find(lastLine == ',',1,'first');
-                if isempty(commaPos)
-                    tStart = NaT;
-                    tEnd   = NaT;
-                    return
-                end
-
-                timeStr = strtrim(extractBefore(lastLine,commaPos));
-                try
-                    tEnd = datetime(timeStr,"InputFormat","MM/dd/yyyy HH:mm:ss.SSSSSSSSS");
-                catch
-                    warning(errormessage)
-                    tStart = NaT;
-                    tEnd   = NaT;
-                end
+                fileStarts(i) = datetime([dateStr, ' ', startStr], 'InputFormat', 'yyyy-MM-dd HHmmss');
+                fileEnds(i) = datetime([dateStr, ' ', endStr], 'InputFormat', 'yyyy-MM-dd HHmmss');
             end
+
+            overlapMask = (fileEnds >= t0) & (fileStarts <= t1);
+            files = allFiles(overlapMask);
+
+            [~, sortIdx] = sort(fileStarts(overlapMask));
+            files = files(sortIdx);
         end
-        function timeTable = loadAndAppendCableData(~, fileList, startTime, endTime)
-            % loadAndAppendCableData  Load and concatenate time window from large CSV cable files.
 
-            warning('off','MATLAB:table:ModifiedAndSavedVarnames');
+        function combinedTable = loadAndFilterMatFiles(~, fileList, t0, t1)
+            % loadAndFilterMatFiles Loads timetables from files and slices to the requested interval
+            tables = cell(numel(fileList), 1);
 
-            tableChunks = cell(numel(fileList), 1);
+            for i = 1:numel(fileList)
+                fullPath = fullfile(fileList(i).folder, fileList(i).name);
+                data = load(fullPath, 'sensorTimetable');
 
-            for idx = 1:numel(fileList)
-                filePath = fullfile(fileList(idx).folder, fileList(idx).name);
-                tableChunks{idx} = BridgeProject.readCableWindow(filePath, startTime, endTime);
+                tt = data.sensorTimetable;
+                mask = (tt.Time >= t0) & (tt.Time <= t1);
+
+                if any(mask)
+                    tables{i} = tt(mask, :);
+                end
             end
 
-            isNonEmpty = ~cellfun(@isempty, tableChunks);
-
-            if any(isNonEmpty)
-                timeTable = vertcat(tableChunks{isNonEmpty});
-                timeTable = sortrows(timeTable);
+            nonEmpty = ~cellfun(@isempty, tables);
+            if ~any(nonEmpty)
+                combinedTable = timetable();
             else
-                timeTable = timetable.empty;
+                combinedTable = vertcat(tables{nonEmpty});
             end
         end
-        function files = addCableMeasurementPeriod(~,files)
-            for k = 1:numel(files)
-                f = fullfile(files(k).folder, files(k).name);
 
-                tok = regexp(files(k).name, ...
-                    '(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d+)', ...
-                    'tokens','once');
-                files(k).startTime = datetime(tok, ...
-                    'InputFormat',"yyyy-MM-dd'T'HH-mm-ss.SSSSSS");
-
-                [~,last] = system(sprintf('tail -n 1 "%s"',f));
-                t1 = extractBefore(last,',');
-                files(k).endTime = datetime(strtrim(t1), ...
-                    'InputFormat',"MM/dd/yyyy HH:mm:ss.SSSSSSSSS");
-            end
-        end
         function tt = applyCableCalibration(~,tt)
             varNames = tt.Properties.VariableNames;
             accVars  = varNames(contains(varNames,"_ch"));
@@ -423,13 +373,92 @@ classdef BridgeProject
             bits  = chunk.Variables;
             ch    = strrm(strrep(accVars,'_',':'),'x');
 
-            acc = calibration_glink(bits,ch);
+            
+            acc = calibration_glink(bits,ch); 
+            
+            % Calibration gives a unit of g's not m/s^2!
+            acc = acc * 9.81; 
 
             tt(:,accVars) = array2table(acc, 'VariableNames', accVars);
             tt.Properties.VariableUnits(accVars) = "m/s^2";
         end
     end
-    methods (Access=private,Static)
+
+    methods (Access = private) % Weatherdata Transforms
+        function self = transformWeatherData(self)
+            if isempty(self.weatherData)
+                return
+            end
+
+            if isfield(self.weatherData, 'WindDir')
+                self.weatherData = self.calculateStayAerodynamics(self.weatherData);
+            end
+
+            if isfield(self.weatherData, 'Precipitation')
+                self.weatherData = self.processRainIntensity(self.weatherData);
+            end
+        end
+
+        function weatherData = calculateStayAerodynamics(self, weatherData)
+            %bridgeAzimuth = 360 - 18;
+            bridgeAzimuth = 360;
+            c1Inclination = 29.8;
+            c2Inclination = 30.7;
+
+            timeVector = weatherData.WindDir.Time;
+            windAzimuth = weatherData.WindDir.Data;
+            meanWindSpeed = weatherData.WindSpeed.Data;
+
+            phiC1Data = self.calculateCableWindAngle(windAzimuth, c1Inclination, bridgeAzimuth);
+            weatherData.PhiC1 = struct('Time', timeVector, 'Data', phiC1Data, 'Unit', 'deg');
+            weatherData.UNormalC1 = struct('Time', timeVector, 'Data', meanWindSpeed .* sind(phiC1Data), 'Unit', 'm/s');
+
+            phiC2Data = self.calculateCableWindAngle(windAzimuth, c2Inclination, bridgeAzimuth);
+            weatherData.PhiC2 = struct('Time', timeVector, 'Data', phiC2Data, 'Unit', 'deg');
+            weatherData.UNormalC2 = struct('Time', timeVector, 'Data', meanWindSpeed .* sind(phiC2Data), 'Unit', 'm/s');
+        end
+
+        function weatherData = processRainIntensity(~, weatherData)
+            % processRainIntensity calculates 10-minute average rain intensity
+            precipTime = weatherData.Precipitation.Time;
+            precipData = weatherData.Precipitation.Data;
+
+            binDuration = minutes(10);
+            binStart = dateshift(precipTime(1), 'start', 'minute');
+            binEnd = dateshift(precipTime(end), 'end', 'minute');
+            binEdges = (binStart : binDuration : binEnd)';
+
+            [~, ~, groups] = histcounts(precipTime, binEdges);
+
+            newTime = binEdges(1:end-1) + binDuration/2;
+            newIntensity = zeros(numel(newTime), 1);
+
+            for i = 1:numel(newTime)
+                groupMask = groups == i;
+                if any(groupMask)
+                    % Aligning with Jasna's note: 10 * mean(W2N)
+                    calculatedValue = mean(precipData(groupMask), 'omitnan') * 10;
+
+                    % Threshold to filter piezoelectric sensor noise/drift
+                    if calculatedValue < 0.01
+                        newIntensity(i) = 0;
+                    else
+                        newIntensity(i) = calculatedValue;
+                    end
+                end
+            end
+
+            weatherData.RainIntensity = struct('Time', newTime, 'Data', newIntensity, 'Unit', 'mm/h');
+        end
+
+        function cableWindAngle = calculateCableWindAngle(~, windAzimuth, inclinationAngle, bridgeAzimuth)
+            yawAngle = windAzimuth - bridgeAzimuth;
+            yawAngle = mod(yawAngle + 180, 360);% - 180;
+            cableWindAngle = acosd(cosd(inclinationAngle) * cosd(yawAngle));
+        end
+    end
+
+    methods (Access=private,Static) % Helper read cable functions
         function timeTable = readCableWindow(filePath, startTime, endTime)
             warning('off','MATLAB:table:ModifiedAndSavedVarnames');
 

@@ -5,13 +5,13 @@ function CableData = CableDataShift2GlbalCoords(CableData)
 % Requires check of drawing!
 % COH Nov. 2025
 vars = CableData.Properties.VariableNames;
-warning('Check this with J+J+NID!')
+%warning('Check this with J+J+NID!')  % Validated 10/1/2025
 
 % see data/misc/accelerometers_*.pdf
 mapAcc = ["C2W" "4251"
-    "C1W" "12047"
-    "C1E" "12046"
-    "C2E" "12045"];
+            "C1W" "12047"
+            "C1E" "12046"
+            "C2E" "12045"];
 
 % Rename CableData variables based on the mapping
 for i = 1:length(vars)
@@ -30,10 +30,10 @@ end
 % z up
 
 %             Pos   x       y       z
-mapAccXYZ = ["C2W"  "ch3"   "ch2"   "-ch1"
-    "C1W"  "ch3"   "ch2"   "-ch1"
-    "C2E"  "ch3"   "-ch2"  "ch1"
-    "C1E"  "ch3"   "-ch2"  "ch1"];
+mapAccXYZ = ["C2W"  "ch2"   "ch3"   "ch1" % Validated 10/1/2025 against NID article
+             "C1W"  "ch2"   "ch3"   "ch1" % Validated 10/1/2025 against NID article
+             "C2E"  "ch2"   "ch3"   "ch1" % Validated 10/1/2025 against NID document
+             "C1E"  "ch2"   "ch3"   "ch1"]; % Validated 10/1/2025 against NID document
 dirs = '0xyz';
 
 for i = 1:width(CableData)
