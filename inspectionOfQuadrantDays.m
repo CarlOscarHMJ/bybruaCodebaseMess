@@ -8,15 +8,15 @@ inspectionDays = {
     '2019-06-17 12:00' '2019-06-17 18:00' 'Day2: Day,   Dry, No RWIV'
     '2020-02-22 00:00' '2020-02-22 06:00' 'Day3: Night, Wet, RWIV'
     '2020-02-21 10:00' '2020-02-21 14:00' 'Day4: Day,   Wet, RWIV'
-    '2020-02-21 13:15' '2020-02-21 13:25' 'Day4: Day,   Wet, RWIV Zoom 13151325'
-    '2020-02-21 13:00' '2020-02-21 13:30' 'Day4: Day,   Wet, RWIV Zoom 13001330'
-    '2020-02-21 00:00' '2020-02-21 23:59' 'Day4: Day,   Wet, RWIV ZoomOutFullDay'
-    '2020-02-21 00:00' '2020-02-22 23:59' 'Day4: Day,   Wet, RWIV ZoomOutNidArt'
-    '2019-09-16 00:00' '2019-09-16 06:00' 'Day1: Night, Dry, No RWIV ZoomOut'
-    '2019-08-26 02:00' '2019-08-26 03:00' 'Initial data used for damping analysis'
-    '2019-09-14 19:00' '2019-09-14 21:00' 'NID Doc. Initial RWIV case'
+    % '2020-02-21 13:15' '2020-02-21 13:25' 'Day4: Day,   Wet, RWIV Zoom 13151325'
+    % '2020-02-21 13:00' '2020-02-21 13:30' 'Day4: Day,   Wet, RWIV Zoom 13001330'
+    % '2020-02-21 00:00' '2020-02-21 23:59' 'Day4: Day,   Wet, RWIV ZoomOutFullDay'
+    % '2020-02-21 00:00' '2020-02-22 23:59' 'Day4: Day,   Wet, RWIV ZoomOutNidArt'
+    % '2019-09-16 00:00' '2019-09-16 06:00' 'Day1: Night, Dry, No RWIV ZoomOut'
+    %'2019-08-26 02:00' '2019-08-26 03:00' 'Day5: DecayTests'
+    '2019-09-14 19:00' '2019-09-14 21:00' 'Day5: Day,   Wet, RWIV'
 };
-
+N = size(inspectionDays,1);
 for i = 1:size(inspectionDays,1)
     startTime = inspectionDays{i,1};
     endTime   = inspectionDays{i,2};
@@ -50,24 +50,99 @@ for i = 1:size(inspectionDays,1)
     end
     plotTile = [inspectionDays{i,3} '-' inspectionDays{i,1} '-' inspectionDays{i,2}(end-4:end)];
     
-    cables = ["C1W_y" "C1E_y"];
+    cables = ["C1E_y" "C1W_y"];
     for cable = cables
         charCable = char(cable);
-        %try
-            if or(i < 5, i > 10)
-                freqInfo{i} = byBroaOverview.plotRwivDiagnostic(cable,[],plotTitle=plotTile);
-            else
-                freqInfo{i} = byBroaOverview.plotRwivDiagnostic(cable,[],plotTitle=plotTile,deckFields='Conc_Z');
-            end
+        try
+            freqInfo{i} = byBroaOverview.plotRwivDiagnostic(cable,[],plotTitle=plotTile,windowSec=30);
             drawnow
             exportgraphics(gcf,['figures/RwivDiagnostics/RwivDiagnostics' strrm(charCable,'_') strrm(inspectionDays{i,3},[" ",":",","]) '.png'],'Resolution',300)
-        % catch ME
-        %     warning('Error processing cable %s: %s', charCable, ME.message);
-        % end
+        catch ME
+             warning('Error processing cable %s: %s', charCable, ME.message);
+        end
     end
 end
+%% Frequency picker
+interrestingCases = [1:4 6];
+zoomPoints = [3.111 4.149 6.24];
+zoomSpan = 0.3;
 
-%% 
+fig = figure(2); clf;
+set(fig, 'Name', 'Frequency Picker', 'NumberTitle', 'off');
+theme(fig,'light')
+tl = tiledlayout(2, 3, 'TileSpacing', 'compact','Padding','compact');
+
+mainAx = nexttile(tl, [1, 3]); 
+hold on;
+
+xlines = [3.111 4.149 6.24];
+xline(xlines,'--k','HandleVisibility','off','LineWidth',2)
+c = 0;
+for i = interrestingCases
+    if i > 10
+        continue
+    end
+    fields = fieldnames(freqInfo{i}.freqResp);
+    %fields = fields(2);
+    for j = 1:length(fields)
+        c = c +1;
+        accelerometor = fields{j};
+        freq = freqInfo{i}.freqResp.(accelerometor).frequency;
+        resp = log(freqInfo{i}.freqResp.(accelerometor).response);
+
+        indx = find(0.4 <= freq & freq <= 15);
+        modalPeakIndices{1} = ampd(resp(indx))+indx(1)-1;
+        [~,modalPeakIndices{2}] = findpeaks(resp,'MinPeakProminence',2);
+        modalPeakIndices{3} = autonomousPeakPicking(resp(indx))+indx(1)-1;
+        
+        colors = ["_r","|b"];
+        names = ["ampd","findpeaks MinPeakProminence=4"];
+        for k = 1:length(modalPeakIndices)-1
+            if c == 1
+                scatter(freq(modalPeakIndices{k}),resp(modalPeakIndices{k}),...
+                    200,colors(k),'DisplayName',names(k),'LineWidth',4)
+            else
+                scatter(freq(modalPeakIndices{k}),resp(modalPeakIndices{k}),...
+                    200,colors(k),'HandleVisibility', 'off','LineWidth',4);
+            end
+        end
+        if contains(inspectionDays{i,3},'no rwiv','IgnoreCase',true)
+            linestyle = ':';
+        else
+            linestyle = '--';
+        end
+        semilogy(freq,resp,...
+            'LineStyle',linestyle,...
+            'DisplayName',[inspectionDays{i,3} ' Resp: ' accelerometor],...
+            'LineWidth',1.2);
+        
+
+    end
+end
+axis tight
+box on
+xlim([0.4,8])
+%set(gca,'YScale','log')
+legend('Location','southeastoutside')
+
+allChildren = findall(mainAx, 'Serializable', 'on');
+objectsToCopy = allChildren(allChildren ~= mainAx);
+for cp = zoomPoints
+    subAx = nexttile(tl);
+    hold(subAx, 'on');
+    
+    copyobj(objectsToCopy, subAx);
+    set(subAx, 'YScale', mainAx.YScale);
+    
+    xlim(subAx, [cp - zoomSpan, cp + zoomSpan]);
+    box(subAx, 'on');
+    title(subAx, sprintf('Mode at %.2f Hz', cp));
+end
+xlabel(tl, 'Frequency (Hz)', 'FontSize', 12,'interpreter','latex');
+ylabel(tl, '$\log$ Power Spectral Density ($\log((m/s^2)^2/Hz)$)', 'FontSize', 12, 'Interpreter', 'latex');
+title(tl, 'Examples of succsesfulness in peak picking', 'FontSize', 14,'interpreter','latex');
+%% Time dependency
+return
 titles = ["10-min","Half Hour","4 Hour" "Full Day" "2 Days"];
 order = [5 6 4 7 8];
 xlines = [3.14 4.30 6.30];
