@@ -114,7 +114,7 @@ if ~isempty(Z),
     h = scatter(xx,yy,25,Z,'filled');
     set(h,'MarkerEdgeColor','k')
     c =colorbar;
-    set(c,'location','NorthOutside','TickLabelInterpreter','latex');
+    set(c,'location','WestOutside','TickLabelInterpreter','latex');
     title(c,labelZ,'interpreter','latex')
 else
     h = plot(xx,yy,[myMarker,myColor]);

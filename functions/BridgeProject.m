@@ -10,10 +10,19 @@ classdef BridgeProject
         weatherData struct
         rawFiles struct
         loadTime datetime
+        opts struct
     end
 
     methods
-        function self = BridgeProject(dataRoot, startTime, endTime)
+        function self = BridgeProject(dataRoot, startTime, endTime, opts)
+            arguments
+                dataRoot 
+                startTime 
+                endTime 
+                opts.loadCables {mustBeNumericOrLogical} = true;
+                opts.loadBridge {mustBeNumericOrLogical} = true;
+            end
+            
             if nargin < 3
                 warning('Not enough inputs')
                 return
@@ -28,18 +37,28 @@ classdef BridgeProject
             end
 
             self.dataRoot = dataRoot;
-            self = self.loadPeriod(startTime, endTime);
+            self = self.loadPeriod(startTime, endTime,opts.loadBridge, opts.loadCables);
         end
 
-        function self = loadPeriod(self, startTime, endTime)
+        function self = loadPeriod(self, startTime, endTime, loadBridge, loadCables)
             self.startTime = startTime;
             self.endTime   = endTime;
-            tic
-            [self.bridgeData,self.weatherData] = self.loadBridgeData(self.startTime, self.endTime);
-            fprintf('Loaded bridge data in %3.1f seconds\n',toc)
-            tic
-            self.cableData  = self.loadCableData(self.startTime, self.endTime);
-            fprintf('Loaded cable data in %3.1f seconds\n',toc)
+            
+            if loadBridge
+                loadTimer = tic;
+                [self.bridgeData,self.weatherData] = self.loadBridgeData(self.startTime, self.endTime);
+                fprintf('Loaded bridge data in %3.1f seconds\n',toc(loadTimer))
+            else
+                fprintf('BridgeData was not loaded\n')
+            end
+            
+            if loadCables
+                loadTimer = tic;
+                self.cableData  = self.loadCableData(self.startTime, self.endTime);
+                fprintf('Loaded cable data in %3.1f seconds\n',toc(loadTimer))
+            else
+                fprintf('CableData was not loaded\n')
+            end
 
             self = self.transformWeatherData();
             self.loadTime = datetime('now');
@@ -212,20 +231,31 @@ classdef BridgeProject
             end
         end
 
-        function DailyData = loadAndMergeBridgeData(self)
-            load(self.rawFiles(1).path);
-            if ~exist("DailyData",'var')
-                error(sprintf('DataLoad ERROR: format of file was wrong, DailyData was not found!\nfile is: %s', self.rawFiles(1).path))
-            end
+        function dailyData = loadAndMergeBridgeData(self)
+            % loadAndMergeBridgeData locates daily files and handles case-insensitive field names.
+            
+            fileData = load(self.rawFiles(1).path);
+            dailyData = getDailyDataField(fileData, self.rawFiles(1).path);
+
             for ii = 2:length(self.rawFiles)
-                S = load(self.rawFiles(ii).path);
-                if ~isfield(S,'DailyData')
-                    error(sprintf('DataLoad ERROR: format for file was wrong, DailyData was not found!\nfile is: %s', self.rawFiles(ii).path))
-                end
+                fileData = load(self.rawFiles(ii).path);
+                nextData = getDailyDataField(fileData, self.rawFiles(ii).path);
+
                 try
-                    DailyData = appendDailyData(self,DailyData,S.DailyData);
+                    dailyData = appendDailyData(self, dailyData, nextData);
                 catch exception
                     error("Failed to append DailyData: %s\n", exception.message);
+                end
+            end
+
+            % Helper to extract the field regardless of capitalization
+            function data = getDailyDataField(S, path)
+                if isfield(S, 'DailyData')
+                    data = S.DailyData;
+                elseif isfield(S, 'dailyData')
+                    data = S.dailyData;
+                else
+                    error('DataLoad ERROR: format of file was wrong, DailyData was not found!\nfile is: %s', path);
                 end
             end
         end

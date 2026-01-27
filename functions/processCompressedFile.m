@@ -1,7 +1,7 @@
 function T = processCompressedFile(datapath, file_compressed)
 fullpath = fullfile(datapath, file_compressed);
 fprintf('Now reading: %s, starttime %s', file_compressed,datestr(now,'HH.MM:SS'));
-tic
+functionTime = tic;
 try 
     gunzip(fullpath);
 catch ME
@@ -43,7 +43,7 @@ T = timetable(Time, ...
 T.Properties.VariableUnits = ["m/s","deg","degC","bar","%","","","m/s^2","m/s^2","m/s^2","m/s^2","m/s^2","m/s^2",""];
 
 if exist(csv_path,'file'), delete(csv_path); end
-Function_timing = toc;
+Function_timing = toc(functionTime);
 fprintf(', finished in %2.2f seconds\n',Function_timing)
 end
 
