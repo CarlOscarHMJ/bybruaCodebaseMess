@@ -12,7 +12,6 @@ inspectionDays = {
 };
 inspectCases = 1:length(inspectionDays);
 load('timeHist.mat')
-addpath('../../functions')
 %% PSD Estimators
 Nfft = 2048;
 samplingFrequency = 50;

@@ -873,7 +873,7 @@ if ~analysis
                 p = plot(K*mean(circle_pos(i-1:i))*[1 1],[0 0.025]*max(circle_pos),'-k');
                 hidelegend(p); 
             end
-            text(K*circle_pos(i),0.05*max(circle_pos),[num2str(circle_lab(i)) '%'],'horizontalalignment','center','verticalalignment','bottom','fontname',frequencyFontName,'fontsize',frequencyFontSize,'fontweight',frequencyFontWeight,'fontangle',frequencyFontAngle,'color',frequencyFontColor,'rotation',0);
+            text(K*circle_pos(i),0.05*max(circle_pos),[num2str(circle_lab(i)) '\%'],'horizontalalignment','center','verticalalignment','bottom','fontname',frequencyFontName,'fontsize',frequencyFontSize,'fontweight',frequencyFontWeight,'fontangle',frequencyFontAngle,'color',frequencyFontColor,'rotation',0);
         end
     end
 
@@ -1006,7 +1006,7 @@ function FrequencyLabelsNormalize(count2,N,radius,escala,CenterLocation,frequenc
         s = sind(N(j)); c = cosd(N(j));                                      % Get the positions in which labels must be placed
         if c>0; ha = 'left';   elseif c<0; ha = 'right'; else; ha = 'center'; end % Depending on the sign of the cosine, horizontal alignment should be one or another
         if s>0; va = 'bottom'; elseif s<0; va = 'top';   else; va = 'middle'; end % Depending on the sign of the sine  , vertical   alignment should be one or another
-        text(radius(end)*c*escala+CenterLocation.X,radius(end)*s*escala+CenterLocation.Y,[num2str(count2(j,end)) '%'],'HorizontalAlignment',ha,'verticalalignment',va,'fontsize',frequencyFontSize,'fontname',frequencyFontName,'fontsize',frequencyFontSize,'fontweight',frequencyFontWeight,'fontangle',frequencyFontAngle,'color',frequencyFontColor); % display the labels for each circle
+        text(radius(end)*c*escala+CenterLocation.X,radius(end)*s*escala+CenterLocation.Y,[num2str(count2(j,end)) '\%'],'HorizontalAlignment',ha,'verticalalignment',va,'fontsize',frequencyFontSize,'fontname',frequencyFontName,'fontsize',frequencyFontSize,'fontweight',frequencyFontWeight,'fontangle',frequencyFontAngle,'color',frequencyFontColor); % display the labels for each circle
     end
 end
 
@@ -1015,14 +1015,14 @@ function FrequencyLabels(circles,radius,angulo,escala,CenterLocation,rmin,freque
     if c>0; ha = 'left';   elseif c<0; ha = 'right'; else; ha = 'center'; end % Depending on the sign of the cosine, horizontal alignment should be one or another
     if s>0; va = 'bottom'; elseif s<0; va = 'top';   else; va = 'middle'; end % Depending on the sign of the sine  , vertical   alignment should be one or another
     for i=1:length(circles)
-        text(c*escalado(radius(i)*escala)+CenterLocation.X,s*escalado(radius(i)*escala)+CenterLocation.Y,[num2str(circles(i)) '%'],'HorizontalAlignment',ha,'verticalalignment',va,'fontsize',frequencyFontSize,'fontname',frequencyFontName,'fontsize',frequencyFontSize,'fontweight',frequencyFontWeight,'fontangle',frequencyFontAngle,'color',frequencyFontColor); % display the labels for each circle
+        text(c*escalado(radius(i)*escala)+CenterLocation.X,s*escalado(radius(i)*escala)+CenterLocation.Y,[num2str(circles(i)) '\%'],'HorizontalAlignment',ha,'verticalalignment',va,'fontsize',frequencyFontSize,'fontname',frequencyFontName,'fontsize',frequencyFontSize,'fontweight',frequencyFontWeight,'fontangle',frequencyFontAngle,'color',frequencyFontColor); % display the labels for each circle
     end
 %     if length(radius)>1
 %         rmin = radius(1)-abs(diff(radius(1:2)));
         if rmin>0
             if c>0; ha = 'right'; elseif c<0; ha = 'left';   else; ha = 'center'; end % Depending on the sign of the cosine, horizontal alignment should be one or another
             if s>0; va = 'top';   elseif s<0; va = 'bottom'; else; va = 'middle'; end % Depending on the sign of the sine  , vertical   alignment should be one or another
-            text(c*escalado(rmin*escala)+CenterLocation.X,s*escalado(rmin*escala)+CenterLocation.Y,'0%','HorizontalAlignment',ha,'verticalalignment',va,'fontsize',frequencyFontSize,'fontname',frequencyFontName,'fontsize',frequencyFontSize,'fontweight',frequencyFontWeight,'fontangle',frequencyFontAngle,'color',frequencyFontColor); % display the labels for each circle
+            text(c*escalado(rmin*escala)+CenterLocation.X,s*escalado(rmin*escala)+CenterLocation.Y,'0\%','HorizontalAlignment',ha,'verticalalignment',va,'fontsize',frequencyFontSize,'fontname',frequencyFontName,'fontsize',frequencyFontSize,'fontweight',frequencyFontWeight,'fontangle',frequencyFontAngle,'color',frequencyFontColor); % display the labels for each circle
         end
 %     end
 end
@@ -1078,9 +1078,9 @@ function leyenda = CreateLegend(vwinds,lablegend,legendvariable,inverse)
     for j=orden                                                            % Cross the speeds in the specified direction
         cont = cont+1;                                                     % Increase counter
         if j==length(vwinds)                                               % When last index is reached
-            string = sprintf('%s %s %g',legendvariable,'\geq',vwinds(j));  % Display wind <= max wind
+            string = sprintf('$%s %g$','\geq',vwinds(j));  % Display wind <= max wind
         else                                                               % For the rest of the indices
-            string = sprintf('%g %s %s < %g',vwinds(j),'\leq',legendvariable,vwinds(j+1)); % Set v1 <= v2 < v1
+            string = sprintf('%g to %g',vwinds(j),vwinds(j+1)); % Set v1 <= v2 < v1
         end
         string = regexprep(string,'0 \leq','0 <');                         % Replace "0 <=" by "0 <", because wind speed = 0 is not displayed in the graph.
         leyenda{length(vwinds)-cont+1} = string;
