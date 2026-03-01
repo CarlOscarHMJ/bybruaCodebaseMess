@@ -618,3 +618,185 @@ end
 
 linkaxes(axesList, 'y');
 title(tiledLayoutHandle, ['Acceleration Time Histories (Shared Y-Axis): ', targetColumn]);
+%% Article figures: Plot Spectral Signatures of RWIV and Non-RWIV Cases
+clear all;clc
+load('figures/selectionOfFreqFunction/timeHist.mat');
+inspectionDays = {
+    '2020-02-22 01:24' '2020-02-22 01:34' 'Day3: Night, Wet, RWIV Zoom 10min Low Vib'
+    '2020-02-22 04:00' '2020-02-22 04:10' 'Day3: Night, Wet, RWIV Zoom 10min Large Vib'
+    '2020-02-21 13:15' '2020-02-21 13:25' 'Day4: Day,   Wet, RWIV Zoom 10min Large Vib'
+    '2020-02-21 12:14' '2020-02-21 12:24' 'Day4: Day,   Wet, RWIV Zoom 10min Low Vib'
+    '2019-09-16 01:15' '2019-09-16 01:25' 'Day1: Night, Dry, No RWIV Zoom 10min case 1'
+    '2019-09-16 03:15' '2019-09-16 03:25' 'Day1: Night, Dry, No RWIV Zoom 10min case 2'
+    '2019-06-17 14:00' '2019-06-17 14:10' 'Day2: Day,   Dry, No RWIV Zoom 10min case 1'
+    '2019-06-17 15:00' '2019-06-17 15:10' 'Day2: Day,   Dry, No RWIV Zoom 10min case 2'
+};
+
+samplingFrequency = 50;
+fftPoints = 2^11;
+burgOrder = 50;
+windowSeconds = 30;
+overlapFactor = 0.5;
+
+comparisonFrequencies = [3.111, 4.149, 6.24];
+comparisonFrequencies = [3.111, 6.24];
+fTargets              = [3.174, 6.32]; % Found centers of deck peaks at RWIV
+freqTolerance       = 0.15;
+targetCoherenceFreq = [3.22, 6.37];  % Found centers of co-coherence peaks at RWIV
+coherenceLimit      = [-0.6,0.7];
+
+windowSamples = windowSeconds * samplingFrequency;
+overlapSamples = floor(windowSamples * overlapFactor);
+
+targetDeckSteel = 'Steel_Z';
+targetDeckConc = 'Conc_Z';
+
+figureHandle = createFigure(100,'Stavanger Bridge: PSD and Co-Coherence Analysis');
+mainLayout = tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+
+% --- Power Spectral Density (Burg's Method) ---
+psdAxes = nexttile(mainLayout);
+for caseIdx = 1:length(timeHist)
+    currentSignal = timeHist{caseIdx}.(targetDeckSteel);
+    caseName = inspectionDays{caseIdx, 3};
+    lineStyle = getLineStyle(caseName);
+    
+    [psdEstimate, frequencyAxis] = pburg(currentSignal, burgOrder, fftPoints, samplingFrequency);
+    semilogy(psdAxes, frequencyAxis, psdEstimate, 'LineStyle', lineStyle, 'DisplayName', caseName);
+    hold(psdAxes, 'on');
+end
+finalizeAxes(psdAxes, comparisonFrequencies, '$S_{DS,Z}\,\mathrm{(m^2\,Hz^{-1})}$');
+
+allPeakSzz = psdAxes.get("YLim");
+for fTarget = fTargets
+    xline(fTarget,'r:','linewidth',2)
+    p = patch(psdAxes, [fTarget - freqTolerance, fTarget + freqTolerance, ...
+                              fTarget + freqTolerance, fTarget - freqTolerance], ...
+                    [min(allPeakSzz) min(allPeakSzz) max(allPeakSzz) max(allPeakSzz)], ...
+                    'k', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    uistack(p, 'bottom');
+end
+ylim(psdAxes,allPeakSzz)
+
+psdAxes = nexttile(mainLayout);
+for caseIdx = 1:length(timeHist)
+    currentSignal = timeHist{caseIdx}.(targetDeckConc);
+    caseName = inspectionDays{caseIdx, 3};
+    lineStyle = getLineStyle(caseName);
+    
+    [psdEstimate, frequencyAxis] = pburg(currentSignal, burgOrder, fftPoints, samplingFrequency);
+    semilogy(psdAxes, frequencyAxis, psdEstimate, 'LineStyle', lineStyle, 'DisplayName', caseName);
+    hold(psdAxes, 'on');
+end
+
+finalizeAxes(psdAxes, comparisonFrequencies, '$S_{DC,Z}\,\mathrm{(m^2\,Hz^{-1})}$');
+allPeakSzz = psdAxes.get("YLim");
+for fTarget = fTargets
+    xline(fTarget,'r:','linewidth',2,'HandleVisibility','off')
+    p = patch(psdAxes, [fTarget - freqTolerance, fTarget + freqTolerance, ...
+                              fTarget + freqTolerance, fTarget - freqTolerance], ...
+                    [min(allPeakSzz) min(allPeakSzz) max(allPeakSzz) max(allPeakSzz)], ...
+                    'k', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    uistack(p, 'bottom');
+end
+ylim(psdAxes,allPeakSzz)
+legend(psdAxes, 'Location', 'northoutside', 'FontSize', 7,'NumColumns',2);
+
+% --- Co-Coherence (Welch Method) ---
+cohMagneAxes = nexttile(mainLayout);
+cohAngleAxes = nexttile(mainLayout);
+
+for caseIdx = 1:length(timeHist)
+    signalA = timeHist{caseIdx}.(targetDeckSteel);
+    signalB = timeHist{caseIdx}.(targetDeckConc);
+    caseName = inspectionDays{caseIdx, 3};
+    lineStyle = getLineStyle(caseName);
+    
+    [crossPsd, frequencyAxis] = cpsd(signalA, signalB, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
+    psdA = pwelch(signalA, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
+    psdB = pwelch(signalB, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
+    
+    Coherence = crossPsd ./ sqrt(psdA .* psdB);
+    cohMagnitude = abs(Coherence);
+    cohAngle = angle(Coherence)./pi*180;
+
+    plot(cohMagneAxes, frequencyAxis, cohMagnitude, 'LineStyle', lineStyle, 'HandleVisibility', 'off');
+    hold(cohMagneAxes,'on')
+    plot(cohAngleAxes, frequencyAxis, cohAngle, 'LineStyle', lineStyle, 'HandleVisibility', 'off');
+    hold(cohAngleAxes,'on')
+end
+
+finalizeAxes(cohMagneAxes, comparisonFrequencies, '$|\gamma_\mathrm{DC_Z,DS_Z}|\,(-)$');
+finalizeAxes(cohAngleAxes, comparisonFrequencies, '$\arg(\gamma_\mathrm{DC_Z,DS_Z})\,(\,^\circ\,)$');
+yline(cohAngleAxes, 0, 'k', 'Alpha', 0.3, 'HandleVisibility', 'off');
+ylim(cohAngleAxes, [-180 180]);
+yticks(cohAngleAxes,[-180 -90 0 90 180])
+ylim(cohMagneAxes, [0 1]);
+xlabel(mainLayout, 'Frequency (Hz)','interpreter','latex');
+xline(cohMagneAxes,targetCoherenceFreq,'r:','linewidth',2)
+xline(cohAngleAxes,targetCoherenceFreq,'r:','linewidth',2)
+
+scale = 2;
+fontsize(figureHandle,10*scale,'points');
+lineWidth = 506.44*scale; %pts
+figureHandle.Units = 'points';
+figureHandle.Position(3:4) = [lineWidth lineWidth/2];
+
+figureFolder = 'figures/BridgeDataProcessedResults/';
+
+saveFig(figureHandle, figureFolder, 'QuadrantSearch',1);
+
+function lineStyle = getLineStyle(description)
+    % Determines line style based on the case description
+    if contains(lower(description), 'no rwiv')
+        lineStyle = '--';
+    else
+        lineStyle = '-';
+    end
+end
+
+function finalizeAxes(axHandle, xLines, yLabelText)
+    % Applies standard formatting to the axes
+    xline(axHandle, xLines, '--k', 'LineWidth', 2, 'HandleVisibility', 'off');
+    ylabel(axHandle, yLabelText,'Interpreter','latex');
+    grid(axHandle, 'on');
+    xlim(axHandle, [2.8 6.7]);
+end
+
+function fig = createFigure(figNum,title)
+fig = figure(figNum); clf;
+set(fig, 'Name', title, 'NumberTitle', 'off');
+set(fig, 'DefaultTextInterpreter', 'latex', ...
+    'DefaultAxesTickLabelInterpreter', 'latex', ...
+    'DefaultLegendInterpreter', 'latex');
+theme(fig, "light");
+colororder(fig, 'earth');
+end
+
+function successFlag = saveFig(fig,figureFolder,fileName,fontScale)
+arguments
+    fig 
+    figureFolder 
+    fileName 
+    fontScale = 1.7
+end
+fontsize(fig, "scale",fontScale);
+try
+    if ~isempty(figureFolder)
+        exportgraphics(fig, fullfile(figureFolder, [fileName '.png']));
+        exportgraphics(fig, fullfile(figureFolder, [fileName '.pdf']), 'ContentType', 'vector');
+        
+        [~,msgID] = lastwarn;
+        if strcmp(msgID, 'MATLAB:print:ContentTypeImageSuggested')
+            exportgraphics(fig, fullfile(figureFolder, [fileName '.png']),'Resolution',600);
+            fprintf('Figure %s was saved in a high .png resulotion aswell',fileName)
+        end
+    else
+        error('No save')
+    end
+    successFlag = true;
+catch ME
+    successFlag = false;
+    error('No save')
+end
+end

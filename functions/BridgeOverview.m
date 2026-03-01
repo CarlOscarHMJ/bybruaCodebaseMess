@@ -943,6 +943,41 @@ classdef BridgeOverview
                 ylim(ax,globalLim)
             end
         end
+        function [BridgeData,CableData] = convertAcceleration(BridgeData,CableData,convert2DispOrVel)
+            if strcmpi(convert2DispOrVel,'displacement')
+                dataout_type = 1;
+            elseif strcmpi(convert2DispOrVel,'velocity')
+                dataout_type = 2;
+            end
+            
+            if ~isempty(BridgeData)
+                bridgeVars = BridgeData.Properties.VariableNames;
+                bridgeDt = median(diff(seconds((BridgeData.Time-BridgeData.Time(1)))));
+                for k = 1:length(bridgeVars)
+                    datain = BridgeData.(bridgeVars{k});
+                    N = length(datain);
+                    datain = [flip(datain(2:end));datain;flip(datain(1:end-1))];
+                    dataout = iomega(datain,bridgeDt,3,dataout_type);
+                    dataout = dataout(N:N*2-1);
+                    dataout = detrend(dataout,3-dataout_type);
+                    BridgeData.(bridgeVars{k}) = dataout;
+                end
+            end
+
+            if ~isempty(CableData)
+                cableVars = CableData.Properties.VariableNames;
+                cableDt = median(diff(seconds((CableData.Time-CableData.Time(1)))));
+                for k = 1:length(cableVars)
+                    datain = CableData.(cableVars{k});
+                    N = length(datain);
+                    datain = [flip(datain(2:end));datain;flip(datain(1:end-1))];
+                    dataout = iomega(datain,cableDt,3,dataout_type);
+                    dataout = dataout(N:N*2-1);
+                    dataout = detrend(dataout,3-dataout_type);
+                    CableData.(cableVars{k}) = dataout;
+                end
+            end
+        end
     end
     methods (Access = private)          % Plotting Helpers
         function checkForNaNs(self)
@@ -1122,41 +1157,7 @@ classdef BridgeOverview
             title(tiles, periodTitle, 'Interpreter', 'latex')
             xlabel(tiles, 'Time')
         end
-        function [BridgeData,CableData] = convertAcceleration(BridgeData,CableData,convert2DispOrVel)
-            if strcmpi(convert2DispOrVel,'displacement')
-                dataout_type = 1;
-            elseif strcmpi(convert2DispOrVel,'velocity')
-                dataout_type = 2;
-            end
-            
-            if ~isempty(BridgeData)
-                bridgeVars = BridgeData.Properties.VariableNames;
-                bridgeDt = median(diff(seconds((BridgeData.Time-BridgeData.Time(1)))));
-                for k = 1:length(bridgeVars)
-                    datain = BridgeData.(bridgeVars{k});
-                    N = length(datain);
-                    datain = [flip(datain(2:end));datain;flip(datain(1:end-1))];
-                    dataout = iomega(datain,bridgeDt,3,dataout_type);
-                    dataout = dataout(N:N*2-1);
-                    dataout = detrend(dataout,3-dataout_type);
-                    BridgeData.(bridgeVars{k}) = dataout;
-                end
-            end
 
-            if ~isempty(CableData)
-                cableVars = CableData.Properties.VariableNames;
-                cableDt = median(diff(seconds((CableData.Time-CableData.Time(1)))));
-                for k = 1:length(cableVars)
-                    datain = CableData.(cableVars{k});
-                    N = length(datain);
-                    datain = [flip(datain(2:end));datain;flip(datain(1:end-1))];
-                    dataout = iomega(datain,cableDt,3,dataout_type);
-                    dataout = dataout(N:N*2-1);
-                    dataout = detrend(dataout,3-dataout_type);
-                    CableData.(cableVars{k}) = dataout;
-                end
-            end
-        end
         function setTimeTicks(axesHandles,timeVec)
             timeStart = min(timeVec);
             timeEnd   = max(timeVec);

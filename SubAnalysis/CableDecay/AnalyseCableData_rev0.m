@@ -8,8 +8,8 @@ dataPath = 'SignalExpressData/';
 
 
 opts = detectImportOptions(measurementLogFileName);
-TestTable = readtable(measurementLogFileName,opts);
-TestTable = TestTable(3,:);
+TestTableOriginal = readtable(measurementLogFileName,opts);
+TestTable = TestTableOriginal(4,:);
 NTests = height(TestTable);
 
 
@@ -19,9 +19,9 @@ for kk = 1:NTests
     [time,timeDate,data] = loadSignalExpressData(fullfile(dataPath,TestTable.Datafile{kk}));
     SampleRate = 1/median(diff(time));
 
-    bandpass         = [0.1,50]; % Hz
-    ButterFieldOrder = 2;
-    data = applyFilter(data,SampleRate,bandpass,ButterFieldOrder);
+    % bandpass         = [0.1,8]; % Hz
+    % ButterFieldOrder = 2;
+    % data = applyFilter(data,SampleRate,bandpass,ButterFieldOrder);
 
     if isempty(TestTable.DecayPeiod{kk})
         idxs = [];
@@ -32,8 +32,19 @@ for kk = 1:NTests
         TestTable.DecayPeiod{kk} = num2str(idxs);
         writetable(TestTable,measurementLogFileName)
     end
-
-    [f,P] = plotCableDecay(time,data,TestTable(kk,:));
+    
+    decayPeriod =str2num(TestTable.DecayPeiod{kk});
+    idxs = decayPeriod(1):decayPeriod(2);
+    %[f,P] = plotCableDecay(time,data,TestTable(kk,:));
+    
+    dt = median(diff(time(idxs)));
+    yvals = detrend(data(:,:),'constant');
+    fsNew = 50;
+    yvals = resample(yvals,fsNew,round(1/dt));
+    %[R,t] = NExT_modified(yvals,1/fsNew,30,2);
+    %SohFindLD(time(idxs), yvals, [2.5 3.5], 1) 
+   
+    [fn0,zeta0,phi0,paraPlot] = SSICOV(yvals(2000:12000,:),1/fsNew,'Ts',10,'Nmin',5,'Nmax',40,'methodCOV',2);
 end
 %%
 fig=figure(2);clf

@@ -366,7 +366,7 @@ classdef BridgeProject
 
             overlapMask = (fileEnds >= t0) & (fileStarts <= t1);
             files = allFiles(overlapMask);
-
+            
             [~, sortIdx] = sort(fileStarts(overlapMask));
             files = files(sortIdx);
         end
@@ -380,6 +380,7 @@ classdef BridgeProject
                 data = load(fullPath, 'sensorTimetable');
 
                 tt = data.sensorTimetable;
+                
                 mask = (tt.Time >= t0) & (tt.Time <= t1);
 
                 if any(mask)
