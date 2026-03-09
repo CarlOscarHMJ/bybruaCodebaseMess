@@ -20,3 +20,5 @@
 *.mp4
 *.mov
 *.tdms*
+*.fig
+*.msi
