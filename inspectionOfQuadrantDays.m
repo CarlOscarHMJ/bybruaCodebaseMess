@@ -632,6 +632,8 @@ inspectionDays = {
     '2019-06-17 15:00' '2019-06-17 15:10' 'Day2: Day,   Dry, No RWIV Zoom 10min case 2'
 };
 
+inspectionDays(:,3) = sprintfc('Case %d$\\;$', 1:8)';
+
 samplingFrequency = 50;
 fftPoints = 2^11;
 burgOrder = 50;
@@ -650,115 +652,313 @@ overlapSamples = floor(windowSamples * overlapFactor);
 
 targetDeckSteel = 'Steel_Z';
 targetDeckConc = 'Conc_Z';
+lineWidth = 1.5;
 
 figureHandle = createFigure(100,'Stavanger Bridge: PSD and Co-Coherence Analysis');
-mainLayout = tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
-
-% --- Power Spectral Density (Burg's Method) ---
-psdAxes = nexttile(mainLayout);
-for caseIdx = 1:length(timeHist)
-    currentSignal = timeHist{caseIdx}.(targetDeckSteel);
-    caseName = inspectionDays{caseIdx, 3};
-    lineStyle = getLineStyle(caseName);
-    
-    [psdEstimate, frequencyAxis] = pburg(currentSignal, burgOrder, fftPoints, samplingFrequency);
-    semilogy(psdAxes, frequencyAxis, psdEstimate, 'LineStyle', lineStyle, 'DisplayName', caseName);
-    hold(psdAxes, 'on');
-end
-finalizeAxes(psdAxes, comparisonFrequencies, '$S_{DS,Z}\,\mathrm{(m^2\,Hz^{-1})}$');
-
-allPeakSzz = psdAxes.get("YLim");
-for fTarget = fTargets
-    xline(fTarget,'r:','linewidth',2)
-    p = patch(psdAxes, [fTarget - freqTolerance, fTarget + freqTolerance, ...
-                              fTarget + freqTolerance, fTarget - freqTolerance], ...
-                    [min(allPeakSzz) min(allPeakSzz) max(allPeakSzz) max(allPeakSzz)], ...
-                    'k', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-    uistack(p, 'bottom');
-end
-ylim(psdAxes,allPeakSzz)
-
-psdAxes = nexttile(mainLayout);
-for caseIdx = 1:length(timeHist)
-    currentSignal = timeHist{caseIdx}.(targetDeckConc);
-    caseName = inspectionDays{caseIdx, 3};
-    lineStyle = getLineStyle(caseName);
-    
-    [psdEstimate, frequencyAxis] = pburg(currentSignal, burgOrder, fftPoints, samplingFrequency);
-    semilogy(psdAxes, frequencyAxis, psdEstimate, 'LineStyle', lineStyle, 'DisplayName', caseName);
-    hold(psdAxes, 'on');
-end
-
-finalizeAxes(psdAxes, comparisonFrequencies, '$S_{DC,Z}\,\mathrm{(m^2\,Hz^{-1})}$');
-allPeakSzz = psdAxes.get("YLim");
-for fTarget = fTargets
-    xline(fTarget,'r:','linewidth',2,'HandleVisibility','off')
-    p = patch(psdAxes, [fTarget - freqTolerance, fTarget + freqTolerance, ...
-                              fTarget + freqTolerance, fTarget - freqTolerance], ...
-                    [min(allPeakSzz) min(allPeakSzz) max(allPeakSzz) max(allPeakSzz)], ...
-                    'k', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'HandleVisibility', 'off');
-    uistack(p, 'bottom');
-end
-ylim(psdAxes,allPeakSzz)
-legend(psdAxes, 'Location', 'northoutside', 'FontSize', 7,'NumColumns',2);
+% mainLayout = tiledlayout(2, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+% 
+% % --- Power Spectral Density (Burg's Method) ---
+% psdAxes = nexttile(mainLayout);
+% for caseIdx = 1:length(timeHist)
+%     currentSignal = timeHist{caseIdx}.(targetDeckSteel);
+%     caseName = inspectionDays{caseIdx, 3};
+%     lineStyle = getLineStyle(caseName);
+% 
+%     [psdEstimate, frequencyAxis] = pburg(currentSignal, burgOrder, fftPoints, samplingFrequency);
+%     semilogy(psdAxes, frequencyAxis, psdEstimate, 'LineStyle', lineStyle, 'DisplayName', caseName);
+%     hold(psdAxes, 'on');
+% end
+% finalizeAxes(psdAxes, comparisonFrequencies, '$S_{DS,Z}\,\mathrm{(m^2\,Hz^{-1})}$');
+% 
+% allPeakSzz = psdAxes.get("YLim");
+% for fTarget = fTargets
+%     xline(fTarget,'r:','linewidth',2)
+%     p = patch(psdAxes, [fTarget - freqTolerance, fTarget + freqTolerance, ...
+%                               fTarget + freqTolerance, fTarget - freqTolerance], ...
+%                     [min(allPeakSzz) min(allPeakSzz) max(allPeakSzz) max(allPeakSzz)], ...
+%                     'k', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+%     uistack(p, 'bottom');
+% end
+% ylim(psdAxes,allPeakSzz)
+% 
+% psdAxes = nexttile(mainLayout);
+% for caseIdx = 1:length(timeHist)
+%     currentSignal = timeHist{caseIdx}.(targetDeckConc);
+%     caseName = inspectionDays{caseIdx, 3};
+%     lineStyle = getLineStyle(caseName);
+% 
+%     [psdEstimate, frequencyAxis] = pburg(currentSignal, burgOrder, fftPoints, samplingFrequency);
+%     semilogy(psdAxes, frequencyAxis, psdEstimate, 'LineStyle', lineStyle, 'DisplayName', caseName);
+%     hold(psdAxes, 'on');
+% end
+% 
+% finalizeAxes(psdAxes, comparisonFrequencies, '$S_{DC,Z}\,\mathrm{(m^2\,Hz^{-1})}$');
+% allPeakSzz = psdAxes.get("YLim");
+% for fTarget = fTargets
+%     xline(fTarget,'r:','linewidth',2,'HandleVisibility','off')
+%     p = patch(psdAxes, [fTarget - freqTolerance, fTarget + freqTolerance, ...
+%                               fTarget + freqTolerance, fTarget - freqTolerance], ...
+%                     [min(allPeakSzz) min(allPeakSzz) max(allPeakSzz) max(allPeakSzz)], ...
+%                     'k', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+%     uistack(p, 'bottom');
+% end
+% ylim(psdAxes,allPeakSzz)
+% lgd = legend(psdAxes, 'FontSize', 7, 'NumColumns', 8);
+% lgd.Layout.Tile = 'north';
 
 % --- Co-Coherence (Welch Method) ---
-cohMagneAxes = nexttile(mainLayout);
-cohAngleAxes = nexttile(mainLayout);
+% cohMagneAxes = nexttile(mainLayout);
+% cohAngleAxes = nexttile(mainLayout);
+% 
+% for caseIdx = 1:length(timeHist)
+%     signalA = timeHist{caseIdx}.(targetDeckSteel);
+%     signalB = timeHist{caseIdx}.(targetDeckConc);
+%     caseName = inspectionDays{caseIdx, 3};
+%     lineStyle = getLineStyle(caseName);
+% 
+%     [crossPsd, frequencyAxis] = cpsd(signalA, signalB, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
+%     psdA = pwelch(signalA, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
+%     psdB = pwelch(signalB, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
+% 
+%     Coherence = crossPsd ./ sqrt(psdA .* psdB);
+%     cohMagnitude = abs(Coherence);
+%     cohAngle = angle(Coherence)./pi*180;
+% 
+%     plot(cohMagneAxes, frequencyAxis, cohMagnitude, 'LineStyle', lineStyle, 'HandleVisibility', 'off');
+%     hold(cohMagneAxes,'on')
+%     plot(cohAngleAxes, frequencyAxis, cohAngle, 'LineStyle', lineStyle, 'HandleVisibility', 'off');
+%     hold(cohAngleAxes,'on')
+% end
+% 
+% finalizeAxes(cohMagneAxes, comparisonFrequencies, '$|\gamma_\mathrm{DC_Z,DS_Z}|\,(-)$');
+% finalizeAxes(cohAngleAxes, comparisonFrequencies, '$\arg(\gamma_\mathrm{DC_Z,DS_Z})\,(\,^\circ\,)$');
+% yline(cohAngleAxes, 0, 'k', 'Alpha', 0.3, 'HandleVisibility', 'off');
+% ylim(cohAngleAxes, [-180 180]);
+% yticks(cohAngleAxes,[-180 -90 0 90 180])
+% ylim(cohMagneAxes, [0 1]);
+% xlabel(mainLayout, 'Frequency (Hz)','interpreter','latex');
+% xline(cohMagneAxes,targetCoherenceFreq,'r:','linewidth',2)
+% xline(cohAngleAxes,targetCoherenceFreq,'r:','linewidth',2)
 
-for caseIdx = 1:length(timeHist)
-    signalA = timeHist{caseIdx}.(targetDeckSteel);
-    signalB = timeHist{caseIdx}.(targetDeckConc);
-    caseName = inspectionDays{caseIdx, 3};
-    lineStyle = getLineStyle(caseName);
-    
-    [crossPsd, frequencyAxis] = cpsd(signalA, signalB, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
-    psdA = pwelch(signalA, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
-    psdB = pwelch(signalB, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
-    
-    Coherence = crossPsd ./ sqrt(psdA .* psdB);
-    cohMagnitude = abs(Coherence);
-    cohAngle = angle(Coherence)./pi*180;
+% Insert Start %%%%%
+xAxisZoomWidth = 0.35;
+mainLayout = tiledlayout(20, 42, 'TileSpacing', 'none', 'Padding', 'compact');
 
-    plot(cohMagneAxes, frequencyAxis, cohMagnitude, 'LineStyle', lineStyle, 'HandleVisibility', 'off');
-    hold(cohMagneAxes,'on')
-    plot(cohAngleAxes, frequencyAxis, cohAngle, 'LineStyle', lineStyle, 'HandleVisibility', 'off');
-    hold(cohAngleAxes,'on')
+steelPowerSpectralDensityAxis = nexttile(mainLayout, 1, [9 19]);
+for caseIndex = 1:length(timeHist)
+    currentSignal = timeHist{caseIndex}.(targetDeckSteel);
+    caseName = inspectionDays{caseIndex, 3};
+    [plotLineStyle,lineWidth] = getLineStyle(caseName);
+    
+    [powerSpectralDensityEstimate, frequencyAxis] = pburg(currentSignal, burgOrder, fftPoints, samplingFrequency);
+    semilogy(steelPowerSpectralDensityAxis, frequencyAxis, powerSpectralDensityEstimate, 'LineStyle', plotLineStyle, 'LineWidth', lineWidth, 'DisplayName', caseName);
+    hold(steelPowerSpectralDensityAxis, 'on');
 end
 
-finalizeAxes(cohMagneAxes, comparisonFrequencies, '$|\gamma_\mathrm{DC_Z,DS_Z}|\,(-)$');
-finalizeAxes(cohAngleAxes, comparisonFrequencies, '$\arg(\gamma_\mathrm{DC_Z,DS_Z})\,(\,^\circ\,)$');
-yline(cohAngleAxes, 0, 'k', 'Alpha', 0.3, 'HandleVisibility', 'off');
-ylim(cohAngleAxes, [-180 180]);
-yticks(cohAngleAxes,[-180 -90 0 90 180])
-ylim(cohMagneAxes, [0 1]);
-xlabel(mainLayout, 'Frequency (Hz)','interpreter','latex');
-xline(cohMagneAxes,targetCoherenceFreq,'r:','linewidth',2)
-xline(cohAngleAxes,targetCoherenceFreq,'r:','linewidth',2)
+finalizeAxes(steelPowerSpectralDensityAxis, comparisonFrequencies, '$S_{DS,Z}\,\mathrm{(m^2\,s^{-4}\,Hz^{-1})}$');
+xlim(steelPowerSpectralDensityAxis, [2.8 6.7]);
+box(steelPowerSpectralDensityAxis, 'on');
+%yAxisLimits = steelPowerSpectralDensityAxis.get("YLim");
+yAxisLimits = [10^(-12),10^(-3)];
 
-scale = 2;
-fontsize(figureHandle,10*scale,'points');
-lineWidth = 506.44*scale; %pts
-figureHandle.Units = 'points';
-figureHandle.Position(3:4) = [lineWidth lineWidth/2];
+for targetFreq = fTargets
+    xline(steelPowerSpectralDensityAxis, targetFreq, 'r:', 'linewidth', 2)
+    patchPolygon = patch(steelPowerSpectralDensityAxis, ...
+        [targetFreq - freqTolerance, targetFreq + freqTolerance, targetFreq + freqTolerance, targetFreq - freqTolerance], ...
+        [min(yAxisLimits) min(yAxisLimits) max(yAxisLimits) max(yAxisLimits)], ...
+        'k', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    uistack(patchPolygon, 'bottom');
+end
+ylim(steelPowerSpectralDensityAxis, yAxisLimits)
+yAxisTicks = steelPowerSpectralDensityAxis.get('YTick');
+yAxisTickLabels = steelPowerSpectralDensityAxis.get("YTickLabel");
 
+concretePowerSpectralDensityAxis = nexttile(mainLayout, 24, [9 19]);
+for caseIndex = 1:length(timeHist)
+    currentSignal = timeHist{caseIndex}.(targetDeckConc);
+    caseName = inspectionDays{caseIndex, 3};
+    [plotLineStyle,lineWidth] = getLineStyle(caseName);
+    
+    [powerSpectralDensityEstimate, frequencyAxis] = pburg(currentSignal, burgOrder, fftPoints, samplingFrequency);
+    semilogy(concretePowerSpectralDensityAxis, frequencyAxis, powerSpectralDensityEstimate, 'LineStyle', plotLineStyle, 'LineWidth', lineWidth, 'DisplayName', caseName);
+    hold(concretePowerSpectralDensityAxis, 'on');
+end
+
+finalizeAxes(concretePowerSpectralDensityAxis, comparisonFrequencies, '$S_{DC,Z}\,\mathrm{(m^2\,s^{-4}\,Hz^{-1})}$');
+xlim(concretePowerSpectralDensityAxis, [2.8 6.7]);
+box(concretePowerSpectralDensityAxis, 'on');
+%yAxisLimits = concretePowerSpectralDensityAxis.get("YLim");
+
+for targetFreq = fTargets
+    xline(concretePowerSpectralDensityAxis, targetFreq, 'r:', 'linewidth', 2, 'HandleVisibility', 'off')
+    patchPolygon = patch(concretePowerSpectralDensityAxis, ...
+        [targetFreq - freqTolerance, targetFreq + freqTolerance, targetFreq + freqTolerance, targetFreq - freqTolerance], ...
+        [min(yAxisLimits) min(yAxisLimits) max(yAxisLimits) max(yAxisLimits)], ...
+        'k', 'FaceAlpha', 0.1, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+    uistack(patchPolygon, 'bottom');
+end
+ylim(concretePowerSpectralDensityAxis, yAxisLimits)
+
+figureLegend = legend(concretePowerSpectralDensityAxis, 'FontSize', 7, 'NumColumns', 8);
+figureLegend.Layout.Tile = 'north';
+
+% --- Initialize Bottom Row (Including Gap Axes) ---
+coherenceMagnitudeLowFreqAxis = nexttile(mainLayout, 463, [9 9]);
+hold(coherenceMagnitudeLowFreqAxis, 'on');
+
+coherenceMagnitudeGapAxis = nexttile(mainLayout, 472, [9 1]);
+
+coherenceMagnitudeHighFreqAxis = nexttile(mainLayout, 473, [9 9]);
+hold(coherenceMagnitudeHighFreqAxis, 'on');
+
+coherencePhaseLowFreqAxis = nexttile(mainLayout, 486, [9 9]);
+hold(coherencePhaseLowFreqAxis, 'on');
+
+coherencePhaseGapAxis = nexttile(mainLayout, 495, [9 1]);
+
+coherencePhaseHighFreqAxis = nexttile(mainLayout, 496, [9 9]);
+hold(coherencePhaseHighFreqAxis, 'on');
+
+for caseIndex = 1:length(timeHist)
+    steelDeckSignal = timeHist{caseIndex}.(targetDeckSteel);
+    concreteDeckSignal = timeHist{caseIndex}.(targetDeckConc);
+    inspectionCaseName = inspectionDays{caseIndex, 3};
+    [plotLineStyle,lineWidth] = getLineStyle(inspectionCaseName);
+    
+    [crossPowerSpectralDensity, frequencyAxis] = cpsd(steelDeckSignal, concreteDeckSignal, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
+    steelDeckPowerSpectralDensity = pwelch(steelDeckSignal, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
+    concreteDeckPowerSpectralDensity = pwelch(concreteDeckSignal, hanning(windowSamples), overlapSamples, fftPoints, samplingFrequency);
+    
+    complexCoherence = crossPowerSpectralDensity ./ sqrt(steelDeckPowerSpectralDensity .* concreteDeckPowerSpectralDensity);
+    coherenceMagnitude = abs(complexCoherence);
+    coherencePhaseAngle = angle(complexCoherence) ./ pi * 180;
+    
+    plot(coherenceMagnitudeLowFreqAxis, frequencyAxis, coherenceMagnitude, 'LineStyle', plotLineStyle, 'LineWidth', lineWidth, 'HandleVisibility', 'off');
+    plot(coherenceMagnitudeHighFreqAxis, frequencyAxis, coherenceMagnitude, 'LineStyle', plotLineStyle, 'LineWidth', lineWidth, 'HandleVisibility', 'off');
+    
+    plot(coherencePhaseLowFreqAxis, frequencyAxis, coherencePhaseAngle, 'LineStyle', plotLineStyle, 'LineWidth', lineWidth, 'HandleVisibility', 'off');
+    plot(coherencePhaseHighFreqAxis, frequencyAxis, coherencePhaseAngle, 'LineStyle', plotLineStyle, 'LineWidth', lineWidth, 'HandleVisibility', 'off');
+end
+
+finalizeAxes(coherenceMagnitudeLowFreqAxis, comparisonFrequencies(1), '$|\gamma_\mathrm{DC_Z,DS_Z}|\,(-)$');
+xlim(coherenceMagnitudeLowFreqAxis, [targetCoherenceFreq(1) - xAxisZoomWidth, targetCoherenceFreq(1) + xAxisZoomWidth]);
+ylim(coherenceMagnitudeLowFreqAxis, [0 1]);
+yticks(coherenceMagnitudeLowFreqAxis, 0:0.2:1);
+box(coherenceMagnitudeLowFreqAxis, 'on');
+xline(coherenceMagnitudeLowFreqAxis, targetCoherenceFreq(1), 'r:', 'linewidth', 2, 'HandleVisibility', 'off');
+
+finalizeAxes(coherenceMagnitudeHighFreqAxis, comparisonFrequencies(2), '');
+xlim(coherenceMagnitudeHighFreqAxis, [targetCoherenceFreq(2) - xAxisZoomWidth, targetCoherenceFreq(2) + xAxisZoomWidth]);
+ylim(coherenceMagnitudeHighFreqAxis, [0 1]);
+yticks(coherenceMagnitudeHighFreqAxis, 0:0.2:1);
+yticklabels(coherenceMagnitudeHighFreqAxis, {});
+box(coherenceMagnitudeHighFreqAxis, 'on');
+xline(coherenceMagnitudeHighFreqAxis, targetCoherenceFreq(2), 'r:', 'linewidth', 2, 'HandleVisibility', 'off');
+
+finalizeAxes(coherencePhaseLowFreqAxis, comparisonFrequencies(1), '$\arg(\gamma_\mathrm{DC_Z,DS_Z})\,(\,^\circ\,)$');
+xlim(coherencePhaseLowFreqAxis, [targetCoherenceFreq(1) - xAxisZoomWidth, targetCoherenceFreq(1) + xAxisZoomWidth]);
+ylim(coherencePhaseLowFreqAxis, [-180 180]);
+yticks(coherencePhaseLowFreqAxis, [-180 -90 0 90 180]);
+box(coherencePhaseLowFreqAxis, 'on');
+yline(coherencePhaseLowFreqAxis, 0, 'k', 'Alpha', 0.3, 'HandleVisibility', 'off');
+xline(coherencePhaseLowFreqAxis, targetCoherenceFreq(1), 'r:', 'linewidth', 2, 'HandleVisibility', 'off');
+
+finalizeAxes(coherencePhaseHighFreqAxis, comparisonFrequencies(2), '');
+xlim(coherencePhaseHighFreqAxis, [targetCoherenceFreq(2) - xAxisZoomWidth, targetCoherenceFreq(2) + xAxisZoomWidth]);
+ylim(coherencePhaseHighFreqAxis, [-180 180]);
+yticks(coherencePhaseHighFreqAxis, [-180 -90 0 90 180]);
+yticklabels(coherencePhaseHighFreqAxis, {});
+box(coherencePhaseHighFreqAxis, 'on');
+yline(coherencePhaseHighFreqAxis, 0, 'k', 'Alpha', 0.3, 'HandleVisibility', 'off');
+xline(coherencePhaseHighFreqAxis, targetCoherenceFreq(2), 'r:', 'linewidth', 2, 'HandleVisibility', 'off');
+
+% --- Apply Broken Axis Visuals ---
+drawBrokenAxisGap(coherenceMagnitudeGapAxis);
+drawBrokenAxisGap(coherencePhaseGapAxis);
+
+uistack(coherenceMagnitudeGapAxis,"top")
+uistack(coherencePhaseGapAxis,"top")
+
+xlabel(mainLayout, 'Frequency (Hz)', 'interpreter', 'latex');
+
+% scaleMultiplier = 2;
+% fontsize(figureHandle, 10 * scaleMultiplier-1, 'points');
+% figureLineWidth = 506.44 * scaleMultiplier;
+% figureHandle.Units = 'points';
+% figureHandle.Position(3:4) = [figureLineWidth figureLineWidth/2];
 figureFolder = 'figures/BridgeDataProcessedResults/';
+saveFig(figureHandle, figureFolder, 'QuadrantSearch', 2.1,1);
 
-saveFig(figureHandle, figureFolder, 'QuadrantSearch',1);
+% =========================================================================
+% HELPER FUNCTIONS
+% (Place this at the bottom of your script along with your other helpers)
+% =========================================================================
 
-function lineStyle = getLineStyle(description)
+function drawBrokenAxisGap(gapAxis)
+    hold(gapAxis, 'on');
+    gapAxis.Color = 'none';
+    gapAxis.XAxis.Visible = 'off';
+    gapAxis.YAxis.Visible = 'off';
+    xlim(gapAxis, [0 1]);
+    ylim(gapAxis, [0 1]);
+
+    % Light grey patch bridging the gap
+    patch(gapAxis, [0 1 1 0], [0 0 1 1], [1 1 1], 'EdgeColor', 'none');
+
+    % Top and bottom horizontal connecting lines
+    plot(gapAxis, [0 1], [0 0], 'k-', 'LineWidth', 0.5);
+    plot(gapAxis, [0 1], [1 1], 'k-', 'LineWidth', 0.5);
+
+    % Diagonal slashes (//) crossing the boundaries
+    % Clipping is off so they extend neatly into the adjacent plots
+    plot(gapAxis, [-0.5 0.5], [-0.03 0.03], '-k', 'LineWidth', 1.5, 'Clipping', 'off');
+    plot(gapAxis, [0.5 1.5], [-0.03 0.03], '-k', 'LineWidth', 1.5, 'Clipping', 'off');
+    
+    plot(gapAxis, [-0.5 0.5], [0.97 1.03], '-k', 'LineWidth', 1.5, 'Clipping', 'off');
+    plot(gapAxis, [0.5 1.5], [0.97 1.03], '-k', 'LineWidth', 1.5, 'Clipping', 'off');
+end
+% Insert end %%%%%
+% loc1 = coherencePhaseLowFreqAxis.Position;
+% loc1(3) = loc1(3)*2;
+% axPhase = axes('Position',loc1);
+% box on;
+% xticks([])
+% yticks([])
+% uistack(axPhase, 'bottom'); 
+% 
+% loc1 = coherenceMagnitudeLowFreqAxis.Position;
+% loc1(3) = loc1(3)*2;
+% axMag = axes('Position',loc1);
+% box on;
+% xticks([])
+% yticks([])
+% uistack(axMag, 'bottom'); 
+
+% scale = 2;
+% fontsize(figureHandle,10*scale-1,'points');
+% lineWidth = 506.44*scale; %pts
+% figureHandle.Units = 'points';
+% figureHandle.Position(3:4) = [lineWidth lineWidth/2];
+% 
+% figureFolder = 'figures/BridgeDataProcessedResults/';
+% 
+% saveFig(figureHandle, figureFolder, 'QuadrantSearch',1);
+
+function [lineStyle,lineWidth] = getLineStyle(description)
     % Determines line style based on the case description
-    if contains(lower(description), 'no rwiv')
+    if contains(lower(description), 'no rwiv') || str2double(description(end-4)) < 5
         lineStyle = '--';
+        lineWidth = 1;
     else
         lineStyle = '-';
+        lineWidth = 1.5;
     end
 end
 
 function finalizeAxes(axHandle, xLines, yLabelText)
     % Applies standard formatting to the axes
     xline(axHandle, xLines, '--k', 'LineWidth', 2, 'HandleVisibility', 'off');
-    ylabel(axHandle, yLabelText,'Interpreter','latex');
+    ylabel(axHandle, yLabelText,'Interpreter','latex','FontSize',10);
     grid(axHandle, 'on');
     xlim(axHandle, [2.8 6.7]);
 end
@@ -773,23 +973,60 @@ theme(fig, "light");
 colororder(fig, 'earth');
 end
 
-function successFlag = saveFig(fig,figureFolder,fileName,fontScale)
+% function successFlag = saveFig(fig,figureFolder,fileName,fontScale)
+% arguments
+%     fig 
+%     figureFolder 
+%     fileName 
+%     fontScale = 1.7
+% end
+% fontsize(fig, "scale",fontScale);
+% exportgraphics(fig, fullfile(figureFolder, [fileName '.svg']), 'ContentType', 'vector');
+% try
+%     if ~isempty(figureFolder)
+%         exportgraphics(fig, fullfile(figureFolder, [fileName '.png']));
+%         exportgraphics(fig, fullfile(figureFolder, [fileName '.pdf']), 'ContentType', 'vector');
+% 
+%         [~,msgID] = lastwarn;
+%         if strcmp(msgID, 'MATLAB:print:ContentTypeImageSuggested')
+%             exportgraphics(fig, fullfile(figureFolder, [fileName '.png']),'Resolution',600);
+%             fprintf('Figure %s was saved in a high .png resulotion aswell',fileName)
+%         end
+%     else
+%         error('No save')
+%     end
+%     successFlag = true;
+% catch ME
+%     successFlag = false;
+%     error('No save')
+% end
+% end
+
+function successFlag = saveFig(fig,figureFolder,fileName,heightScale,widthScale)
 arguments
     fig 
     figureFolder 
     fileName 
-    fontScale = 1.7
+    heightScale = 2
+    widthScale = 1
 end
-fontsize(fig, "scale",fontScale);
+%fontsize(fig, "scale",fontScale);
+scale = 2;
+fontsize(fig,9*scale,'points');
+lineWidth = 506.44*scale; %cm
+fig.Units = 'points';
+fig.Position(3:4) = [lineWidth/widthScale lineWidth/heightScale];
+fig.Renderer = 'painters';
+
 try
     if ~isempty(figureFolder)
-        exportgraphics(fig, fullfile(figureFolder, [fileName '.png']));
-        exportgraphics(fig, fullfile(figureFolder, [fileName '.pdf']), 'ContentType', 'vector');
+        exportgraphics(fig, fullfile(figureFolder, [fileName '.png']),'Resolution',600);
+        exportgraphics(fig, fullfile(figureFolder, [fileName '.pdf']), 'ContentType', 'vector','BackgroundColor','white');
         
         [~,msgID] = lastwarn;
         if strcmp(msgID, 'MATLAB:print:ContentTypeImageSuggested')
-            exportgraphics(fig, fullfile(figureFolder, [fileName '.png']),'Resolution',600);
-            fprintf('Figure %s was saved in a high .png resulotion aswell',fileName)
+            exportgraphics(fig, fullfile(figureFolder, [fileName '.pdf']), 'ContentType', 'auto');
+            fprintf('Figure %s was saved in an automated .pdf way \n',fileName)
         end
     else
         error('No save')

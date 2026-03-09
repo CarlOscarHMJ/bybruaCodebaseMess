@@ -20,10 +20,20 @@ limits.rainLowerLimit      = 0.01;
 
 allStats = applyAnalysisFlags(allStats, limits);
 %% Visualization
-rng(420)
+rng(112)
 plotFlags = ["flag_StructuralResponseMatch","flag_PSDTotal","flag_CohTotal","flag_EnvironmentalMatch","flag_PSDAllDirections","flag_PSDSelectedCs"];
 flagNames = ["PSD $\cap$ Coherence", "PSD", "Coherence", "Daniotti\,(2021)","PSD All Directions","PSD Selected Directions"];
-% plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,2);
+% Paper figures
+% plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
+% plotNidComparisonPeakIntensity(allStats, plotFlags(2), limits, 'global', figureFolder,flagNames(2));
+% plotWindRoses(allStats,figureFolder);
+% plotRiwvWeatherScatter3D(allStats, limits, figureFolder);
+plotRwivWindSpeedVsTime(allStats,plotFlags(2),figureFolder,limits,flagNames(2));
+% plotDAuteuilComparison(allStats, plotFlags(2),flagNames(2), 29.8,  figureFolder, 'Data/Misc/DAuteuil2023ReviewData.csv','violin');
+
+
+
+% plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
 % plotNidComparison(allStats,plotFlags,limits,'global',figureFolder);
 % plotFlaggedAccVsWind(allStats, plotFlags, 'global', figureFolder)
 % plotPeaksDistribution(allStats, limits,figureFolder,'X');drawnow
@@ -151,11 +161,14 @@ function StatsTable = applyAnalysisFlags(StatsTable, Thresholds)
     CoherenceFlagMode2 = CoherenceMatrix(:,2) >= Thresholds.coherenceLimit(2);
     
     UNormalC1_mean  = [StatsTable.UNormalC1.mean];
+    WindSpeed_mean  = [StatsTable.WindSpeed.mean];
     PhiC1_mean      = [StatsTable.PhiC1.mean];
     RainIntensity   = [StatsTable.RainIntensity.mean];
 
-    EnvironmentalWindSpeedFlag = (UNormalC1_mean >= Thresholds.cableWindSpeed(1)...
-                                & UNormalC1_mean <= Thresholds.cableWindSpeed(2)).';
+    % EnvironmentalWindSpeedFlag = (UNormalC1_mean >= Thresholds.cableWindSpeed(1)...
+    %                             & UNormalC1_mean <= Thresholds.cableWindSpeed(2)).';
+    EnvironmentalWindSpeedFlag = (WindSpeed_mean >= Thresholds.cableWindSpeed(1)...
+                                & WindSpeed_mean <= Thresholds.cableWindSpeed(2)).';
     EnvironmentalWindAngleFlag = (PhiC1_mean >= Thresholds.cableWindDir(1)...
                                 & PhiC1_mean <= Thresholds.cableWindDir(2)).';
     EnvironmentalRainFlag = (RainIntensity > Thresholds.rainLowerLimit).'; 
@@ -275,7 +288,8 @@ function plotNidComparison(allStats, flagFields, limits, windDomain, figureFolde
         currentRain = rain(rain < 50);
 
         if strcmpi(windDomain, 'local')
-            windSpeed = [events.UNormalC1.mean]';
+            %windSpeed = [events.UNormalC1.mean]';
+            windSpeed = [events.WindSpeed.mean]';
             windAngle = [events.PhiC1.mean]';
         else
             windSpeed = [events.WindSpeed.mean]';
@@ -314,7 +328,7 @@ function plotNidComparison(allStats, flagFields, limits, windDomain, figureFolde
 
         if strcmpi(windDomain, 'local')
             xlim([30 150])
-            ylim([0 16])
+            ylim([0 18])
         else
             %xlim([100 260])$\mathrm{m\,s^{-1}}$
             xlim([0 360])
@@ -322,14 +336,18 @@ function plotNidComparison(allStats, flagFields, limits, windDomain, figureFolde
         end
         
         if addDecisionBoundary || strcmpi(flagName,'PSD')
-            plotAndWriteDecisionBoundary(windAngle(rainIdxs),windSpeed(rainIdxs));
+              windAngleGlobal = [events.WindDir.mean]';
+              windAngesBelow180 = windAngleGlobal < 180;
+              idxBoundary = rainIdxs & windAngesBelow180;
+            plotAndWriteDecisionBoundary(windAngle(idxBoundary),windSpeed(idxBoundary));
         end
-        drawnow;
+        %drawnow;
     end
 
     if strcmpi(windDomain, 'local')
         xlabel(tlo, '$\Phi$ (deg)', 'Interpreter', 'latex');
-        ylabel(tlo, '$U_{N}$ ($\mathrm{m\,s^{-1}}$)', 'Interpreter', 'latex');
+        %ylabel(tlo, '$U_{N}$ ($\mathrm{m\,s^{-1}}$)', 'Interpreter', 'latex');
+        ylabel(tlo, '$\bar{u}$ ($\mathrm{m\,s^{-1}}$)', 'Interpreter', 'latex');
     else
         xlabel(tlo, 'Bridge axis wind (deg)', 'Interpreter', 'latex');
         ylabel(tlo, 'Wind speed ($\mathrm{m\,s^{-1}}$)', 'Interpreter', 'latex');
@@ -1201,6 +1219,7 @@ end
 
 timeVector = mean(allStats.duration,2);
 normalWindSpeed = [allStats.UNormalC1.mean];
+normalWindSpeed = [allStats.WindSpeed.mean];
 cableWindAngle = [allStats.PhiC1.mean];
 rainIntensity = [allStats.RainIntensity.mean];
 isCritical = allStats.(flagName);
@@ -1237,7 +1256,7 @@ grid on;
 box on;
 ylim([0 max(normalWindSpeed)])
 xlim([min(timeVector) max(timeVector)])
-ylabel('$\bar{u}_N$ ($\mathrm{m\,s^{-1}}$)');
+ylabel('$\bar{u}$ ($\mathrm{m\,s^{-1}}$)');
 
 %legend('Location', 'northoutside','Orientation','horizontal');
 map = colororder(weatherFigure, 'earth');
@@ -1333,7 +1352,7 @@ for i = 1:length(flagFields)
     title(ax, sprintf('Criteria: $\\texttt{%s}$', strrep(critName,'_','\_')),'Interpreter','latex');
 
     cb = colorbar;
-    ylabel(cb, 'Wind Speed $\mathrm{(m\,s^{-1})}$','Interpreter','latex');
+    ylabel(cb, '$\bar{u}$ $\mathrm{(m\,s^{-1})}$','Interpreter','latex');
     cb.TickLabelInterpreter = 'latex';
     cb.Label.Interpreter = 'latex';
     colormap(ax,nebula);
@@ -1425,8 +1444,8 @@ function plotDAuteuilComparison(allStats, flagField, flagName, cableInclinationA
         
         calculatedYawAnglesArray = {rawYawAnglesArray(rawYawAnglesArray < 180)-90,...
                                     (rawYawAnglesArray(rawYawAnglesArray > 180)-270)*(-1)};
-        legendNames = {'Current Study ($\theta \approx 30^\circ$, SE winds)',...
-                       'Current Study ($\theta \approx 30^\circ$, SW winds)'};
+        legendNames = {'Current Study ($\theta \approx 30^\circ$, SE winds)$\qquad$',...
+                       'Current Study ($\theta \approx 30^\circ$, SW winds)$\qquad$'};
 
         studyColor = [0.55 0.77 0.94];
         lineStyles = {'--',':'};
@@ -1461,11 +1480,11 @@ function plotDAuteuilComparison(allStats, flagField, flagName, cableInclinationA
     ylabel(axesObject, 'Inclination angle, $\theta$ (deg)', 'Interpreter', 'latex');
     title(axesObject, sprintf('Criteria: \\texttt{%s}', strrep(flagName, '_', '\_')), 'Interpreter', 'latex');
     
-    legend('Interpreter', 'latex', 'Location', 'eastoutside');
+    lg = legend('Interpreter', 'latex', 'Location', 'eastoutside','FontSize',8);
 
     figureSaveName = sprintf('DAuteuil_Comparison_%s', flagField);
     figureSaveName = strrep(figureSaveName, '\', '');
-    saveFig(comparisonFigure,figureFolder,figureSaveName,2.7,1)
+    saveFig(comparisonFigure,figureFolder,figureSaveName,2.7,1,lg)
 
     function addBoxPlot(axesObject,lineStyle,studyColor,...
                 currentStudyGraphicsHandlesArray,cableInclinationAngle,calculatedYawAnglesArray, legendName)
@@ -1912,6 +1931,7 @@ end
 %% --- Plotting helpers ---
 function fig = createFigure(figNum,title)
 fig = figure(figNum); clf;
+set(fig, 'Visible', 'off');
 set(fig, 'Name', title, 'NumberTitle', 'off');
 set(fig, 'DefaultTextInterpreter', 'latex', ...
     'DefaultAxesTickLabelInterpreter', 'latex', ...
@@ -1920,30 +1940,36 @@ theme(fig, "light");
 colororder(fig, 'earth');
 end
 
-function successFlag = saveFig(fig,figureFolder,fileName,heightScale,widthScale)
+function successFlag = saveFig(fig,figureFolder,fileName,heightScale,widthScale,leg)
 arguments
     fig 
     figureFolder 
     fileName 
     heightScale = 2
     widthScale = 1
+    leg = [];
 end
 %fontsize(fig, "scale",fontScale);
 scale = 2;
-fontsize(fig,8*scale,'points');
+fontsize(fig,9*scale,'points');
 lineWidth = 506.44*scale; %cm
 fig.Units = 'points';
 fig.Position(3:4) = [lineWidth/widthScale lineWidth/heightScale];
+fig.Renderer = 'painters';
+
+if ~isempty(leg)
+    leg.FontSize = 16;
+end
 
 try
     if ~isempty(figureFolder)
-        exportgraphics(fig, fullfile(figureFolder, [fileName '.png']));
+        exportgraphics(fig, fullfile(figureFolder, [fileName '.png']),'Resolution',600);
         exportgraphics(fig, fullfile(figureFolder, [fileName '.pdf']), 'ContentType', 'vector');
         
         [~,msgID] = lastwarn;
         if strcmp(msgID, 'MATLAB:print:ContentTypeImageSuggested')
-            exportgraphics(fig, fullfile(figureFolder, [fileName '.png']),'Resolution',600);
-            fprintf('Figure %s was saved in a high .png resulotion aswell\n',fileName)
+            exportgraphics(fig, fullfile(figureFolder, [fileName '.pdf']), 'ContentType', 'auto');
+            fprintf('Figure %s was saved in an automated .pdf way \n',fileName)
         end
     else
         error('No save')
