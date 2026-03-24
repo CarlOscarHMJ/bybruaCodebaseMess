@@ -1,0 +1,109 @@
+function freqInfo = inspectDayResponse(startDate, endDate, options)
+% inspectDayResponse evaluates bridge stay cable response for a given time window.
+arguments
+    startDate 
+    endDate 
+    options.dataRoot string = '/home/carl/OneDrive/Documents/PhD_Stavanger/ByBrua/Analysis/Data'
+    options.cables string = ["C1E_y", "C1W_y"]
+    options.applyFilter logical = true
+    options.filterOrder double = 7
+    options.filterLowFreq double = 0.4
+    options.filterHighFreq double = 15
+    options.nfft double = 2^11
+    options.freqMethod string {mustBeMember(options.freqMethod, ["welch", "stft"])} = "welch"
+    options.figureFolder string = 'figures/RwivDiagnostics'
+    options.plotTitle string = ""
+end
+
+startDate = formatDatetime(startDate);
+endDate = formatDatetime(endDate, startDate);
+
+byBroaOverview = initializeBridgeData(startDate, endDate, options);
+
+if strlength(options.plotTitle) == 0
+    options.plotTitle = sprintf('%s to %s', char(startDate), char(endDate));
+end
+
+freqInfo = plotAndSaveDiagnostics(byBroaOverview, options);
+end
+
+function dt = formatDatetime(inputDate, referenceDate)
+% formatDatetime converts string/char arrays to datetime objects. 
+% Uses referenceDate for the date portion if inputDate is only a time string.
+if nargin < 2
+    referenceDate = datetime.empty;
+end
+
+if ischar(inputDate) || isstring(inputDate)
+    inputString = string(inputDate);
+    if strlength(inputString) <= 8 && ~isempty(referenceDate)
+        if strlength(inputString) <= 5
+            inputString = inputString + ":00";
+        end
+        
+        timePart = duration(inputString);
+        dt = dateshift(referenceDate, 'start', 'day') + timePart;
+    else
+        try
+            dt = datetime(inputString, 'InputFormat', 'yyyy-MM-dd HH:mm');
+        catch
+            dt = datetime(inputString);
+        end
+    end
+else
+    dt = inputDate;
+end
+end
+
+function byBroaOverview = initializeBridgeData(startDate, endDate, options)
+% initializeBridgeData creates the bridge project object and applies signal filters.
+byBroa = BridgeProject(options.dataRoot, startDate, endDate);
+byBroaOverview = BridgeOverview(byBroa);
+byBroaOverview = byBroaOverview.fillMissingDataPoints();
+
+if options.applyFilter
+    byBroaOverview = byBroaOverview.designFilter('butter', ...
+        order=options.filterOrder, ...
+        fLow=options.filterLowFreq, ...
+        fHigh=options.filterHighFreq);
+    byBroaOverview = byBroaOverview.applyFilter();
+end
+end
+
+function freqInfo = plotAndSaveDiagnostics(byBroaOverview, options)
+% plotAndSaveDiagnostics calculates frequency responses and exports plots.
+freqInfo = cell(length(options.cables), 1);
+
+if strlength(options.figureFolder) > 0 && ~exist(options.figureFolder, 'dir')
+    mkdir(options.figureFolder);
+end
+
+for i = 1:length(options.cables)
+    currentCable = options.cables(i);
+    try
+        freqInfo{i} = byBroaOverview.plotRwivDiagnostic(currentCable, [], ...
+            plotTitle=options.plotTitle, ...
+            nfft=options.nfft, ...
+            freqMethod=options.freqMethod);
+            
+        drawnow;
+        
+        if strlength(options.figureFolder) > 0
+            fileName = generateFileName(currentCable, options.plotTitle);
+            savePath = fullfile(options.figureFolder, fileName);
+            exportgraphics(gcf, savePath, 'Resolution', 300);
+        end
+    catch executionError
+        warning('Error processing cable %s: %s', currentCable, executionError.message);
+    end
+end
+end
+
+function fileName = generateFileName(cableString, titleString)
+% generateFileName constructs a clean file name for the exported diagnostic graphics.
+cleanCable = strrep(char(cableString), '_', '');
+cleanTitle = strrep(char(titleString), ' ', '_');
+cleanTitle = strrep(cleanTitle, ':', '');
+
+fileName = sprintf('RwivDiagnostics_%s_%s.png', cleanCable, cleanTitle);
+end

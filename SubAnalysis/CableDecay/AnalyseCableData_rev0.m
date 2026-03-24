@@ -13,8 +13,6 @@ TestTable = TestTableOriginal(4,:);
 NTests = height(TestTable);
 
 
-
-
 for kk = 1:NTests
     [time,timeDate,data] = loadSignalExpressData(fullfile(dataPath,TestTable.Datafile{kk}));
     SampleRate = 1/median(diff(time));
@@ -35,16 +33,7 @@ for kk = 1:NTests
     
     decayPeriod =str2num(TestTable.DecayPeiod{kk});
     idxs = decayPeriod(1):decayPeriod(2);
-    %[f,P] = plotCableDecay(time,data,TestTable(kk,:));
-    
-    dt = median(diff(time(idxs)));
-    yvals = detrend(data(:,:),'constant');
-    fsNew = 50;
-    yvals = resample(yvals,fsNew,round(1/dt));
-    %[R,t] = NExT_modified(yvals,1/fsNew,30,2);
-    %SohFindLD(time(idxs), yvals, [2.5 3.5], 1) 
-   
-    [fn0,zeta0,phi0,paraPlot] = SSICOV(yvals(2000:12000,:),1/fsNew,'Ts',10,'Nmin',5,'Nmax',40,'methodCOV',2);
+    [f,P] = plotCableDecay(time,data,TestTable(kk,:));
 end
 %%
 fig=figure(2);clf

@@ -15,10 +15,11 @@ inspectionDays = {
     '2019-09-16 00:00' '2019-09-16 06:00' 'Day1: Night, Dry, No RWIV ZoomOut'
     '2019-08-26 02:00' '2019-08-26 03:00' 'Day5: DecayTests'
     '2019-09-14 19:00' '2019-09-14 21:00' 'Day5: Day,   Wet, RWIV'
+    '2020-02-29 00:00' '2020-02-29 21:00' 'Analysis of ~4Hz peak almost full day'
 };
 N = size(inspectionDays,1);
 
-inspectCases = [1:4 11];
+inspectCases = [8];
 Nfft = 2^11;
 for i = inspectCases
     startTime = inspectionDays{i,1};

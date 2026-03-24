@@ -167,7 +167,7 @@ classdef BridgeOverview
                 TimePeriod   = []
                 plotMode     = 'normal'
             end
-            
+
             try
                 checkForNaNs(self);
             catch ME
@@ -178,12 +178,12 @@ classdef BridgeOverview
 
             if strcmpi(plotMode,'Vertical')
                 BridgeOverview.plotTimeHistoryVertical(self.project.bridgeData, ...
-                                                       self.project.cableData, ...
-                                                       TimePeriod, SignalOutput);
+                    self.project.cableData, ...
+                    TimePeriod, SignalOutput);
             else
                 BridgeOverview.plotTime(self.project.bridgeData, ...
-                                        self.project.cableData, ...
-                                        TimePeriod, SignalOutput);
+                    self.project.cableData, ...
+                    TimePeriod, SignalOutput);
             end
         end
         function plotEpsdHistory(self, segmentDurationMinutes,TimePeriod)
@@ -479,21 +479,22 @@ classdef BridgeOverview
                 'Interpreter', 'latex', 'FontSize', 12);
         end
         function freqInfo = plotRwivDiagnostic(self, cableField, timePeriod, opts)
+            % plotRwivDiagnostic evaluates and plots bridge and cable response diagnostics.
             arguments
                 self
-                cableField (1,1) string
+                cableField string = ""
                 timePeriod = []
-                opts.deckFields (1,:) string = ["Conc_Z" "Steel_Z"]
+                opts.deckFields (1,:) string = ["Conc_Z", "Steel_Z"]
                 opts.fMax (1,1) double = 10
                 opts.windowSec (1,1) double = 60
                 opts.overlapPct (1,1) double = 50
-                opts.Nfft (1,1) double = 256 %{mustBePowerOfTwo}
+                opts.nfft (1,1) double = 256
                 opts.coherenceType (1,1) string {mustBeMember(opts.coherenceType, ["wavelet", "normal"])} = "normal"
-                opts.plotTitle {mustBeTextScalar} = ''
+                opts.freqMethod (1,1) string {mustBeMember(opts.freqMethod, ["welch", "stft"])} = "welch"
+                opts.plotTitle {mustBeTextScalar} = ""
             end
+
             tic
-            % Function to visualize RWIV events by correlating cable vibrations with
-            % environmental weather data and bridge deck accelerations.
 
             if isempty(timePeriod)
                 timePeriod = [self.project.startTime, self.project.endTime];
@@ -501,54 +502,165 @@ classdef BridgeOverview
 
             timeFilter = timerange(timePeriod(1), timePeriod(2));
             bridgeData = self.project.bridgeData(timeFilter, :);
-            cableData = self.project.cableData(timeFilter, :);
-            weatherData = self.project.weatherData;
 
-            weatherFields = fieldnames(weatherData);
-            for i = 1:numel(weatherFields)
-                fName = weatherFields{i};
-                currentField = weatherData.(fName);
-                if isstruct(currentField) && isfield(currentField, 'Time')
-                    idx = currentField.Time >= timePeriod(1) & currentField.Time <= timePeriod(2);
-                    weatherData.(fName).Time = currentField.Time(idx);
-                    weatherData.(fName).Data = currentField.Data(idx);
+            hasCableData = cableField ~= "" && ~isempty(self.project.cableData);
+            if hasCableData
+                cableData = self.project.cableData(timeFilter, :);
+                if isempty(cableData)
+                    hasCableData = false;
                 end
+            else
+                cableData = [];
             end
+
+            weatherData = filterWeatherData(self.project.weatherData, timePeriod);
 
             fig = figure(7); clf;
             set(fig, 'Name', 'RWIV Diagnostic', 'NumberTitle', 'off');
-            theme('light')
-            tl=tiledlayout(3, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
+            theme('light');
+
+            tl = tiledlayout(3, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 
             plotEnvironmentalConditions(weatherData);
-            plotTimeHistory(bridgeData, cableData, cableField, opts.deckFields);
-            freqInfo.freqResp = plotFrequencyResponse(bridgeData, cableData, cableField, opts.deckFields, opts.fMax, opts.windowSec, opts.overlapPct, opts.Nfft);
+            plotTimeHistory(bridgeData, cableData, cableField, opts.deckFields, hasCableData);
 
-            if opts.coherenceType == "wavelet"
-                plotWaveletCoherence(bridgeData, cableData, cableField, opts.deckFields(1), opts.fMax);
+            if strcmpi(opts.freqMethod, "stft")
+                freqInfo.freqResp = plotPeriodogram(bridgeData, cableData, cableField, opts.deckFields, ...
+                    opts.fMax, opts.windowSec, opts.overlapPct, opts.nfft, hasCableData);
+            else
+                freqInfo.freqResp = plotFrequencyResponse(bridgeData, cableData, cableField, opts.deckFields, ...
+                    opts.fMax, opts.windowSec, opts.overlapPct, opts.nfft, hasCableData);
+            end
+
+            if strcmpi(opts.coherenceType, "wavelet")
+                plotWaveletCoherence(bridgeData, cableData, cableField, opts.deckFields, opts.fMax, hasCableData);
                 freqInfo.coCoherence = struct;
             else
-                freqInfo.coCoherence = plotFullCoherence(bridgeData, cableData, cableField, opts.deckFields, opts.fMax, opts.windowSec, opts.overlapPct, opts.Nfft);
+                freqInfo.coCoherence = plotFullCoherence(bridgeData, cableData, cableField, opts.deckFields, ...
+                    opts.fMax, opts.windowSec, opts.overlapPct, opts.nfft, hasCableData);
             end
 
-            if ~isempty(opts.plotTitle)
-                title(tl,opts.plotTitle)
+            if strlength(opts.plotTitle) > 0
+                title(tl, opts.plotTitle);
             end
 
-            fprintf('Finished Diagnostics plot in %3.1f seconds\n',toc)
+            fprintf('Finished Diagnostics plot in %3.1f seconds\n', toc);
+
+            function filteredWeather = filterWeatherData(weather, timeRange)
+                % filterWeatherData restricts weather timetables to the specified time period.
+                filteredWeather = weather;
+                weatherFields = fieldnames(filteredWeather);
+                for idx = 1:numel(weatherFields)
+                    fieldName = weatherFields{idx};
+                    currentField = filteredWeather.(fieldName);
+                    if isstruct(currentField) && isfield(currentField, 'Time')
+                        timeMask = currentField.Time >= timeRange(1) & currentField.Time <= timeRange(2);
+                        filteredWeather.(fieldName).Time = currentField.Time(timeMask);
+                        filteredWeather.(fieldName).Data = currentField.Data(timeMask);
+                    end
+                end
+            end
+
+            function freqResp = plotPeriodogram(bTable, cTable, cField, dFields, fLimit, winSec, overlapPct, nfftVal, hasCable)
+                % plotPeriodogram computes and visualizes the STFT spectrogram.
+                ax = nexttile(4);
+                freqResp = struct;
+
+                if hasCable
+                    fs = 1 / median(diff(seconds(cTable.Time - cTable.Time(1))));
+                    winSamples = round(winSec * fs);
+                    overlapSamples = round(winSamples * (overlapPct / 100));
+
+                    [~, fAxis, tAxis, pAxis] = spectrogram(double(cTable.(cField)), hamming(winSamples), overlapSamples, nfftVal, fs);
+                    imagesc(ax, tAxis, fAxis, 10*log10(pAxis));
+                    freqResp.(cField).time = tAxis;
+                    freqResp.(cField).frequency = fAxis;
+                    freqResp.(cField).response = pAxis;
+                    plotLabel = strrep(cField, '_', ' ');
+                else
+                    fs = 1 / median(diff(seconds(bTable.Time - bTable.Time(1))));
+                    targetField = dFields(1);
+                    winSamples = round(winSec * fs);
+                    overlapSamples = round(winSamples * (overlapPct / 100));
+
+                    [~, fAxis, tAxis, pAxis] = spectrogram(double(bTable.(targetField)), hamming(winSamples), overlapSamples, nfftVal, fs);
+                    imagesc(ax, tAxis, fAxis, 10*log10(pAxis));
+                    freqResp.(targetField).time = tAxis;
+                    freqResp.(targetField).frequency = fAxis;
+                    freqResp.(targetField).response = pAxis;
+                    plotLabel = strrep(targetField, '_', ' ');
+                end
+
+                axis(ax, 'xy');
+                ylim(ax, [0 fLimit]);
+                colormap(ax, jet);
+
+                cBar = colorbar(ax);
+                cBar.Label.String = 'Power/Frequency (dB/Hz)';
+                cBar.Label.Interpreter = 'latex';
+
+                ylabel(ax, 'Frequency (Hz)', 'Interpreter', 'latex');
+                xlabel(ax, 'Time (s)', 'Interpreter', 'latex');
+                title(ax, sprintf('STFT Periodogram: %s', plotLabel), 'Interpreter', 'latex');
+
+                addCableFrequencyLinesStft(ax);
+            end
+
+            function addCableFrequencyLinesStft(ax)
+                % addCableFrequencyLinesStft overlays modal frequencies on the Y-axis for STFT.
+                cableFreqsC1 = [1.03, 2.08, 3.10, 4.15, 5.13, 6.16, 7.32, 8.30, 9.30];
+                deckFreqsC1 = [1.83, 3.52, 5.15];
+                cableFreqsC5 = [3.00, 4.60, 5.40, 6.10, 7.60, 9.20];
+                deckFreqsC5 = [1.24, 2.93, 6.03, 6.11];
+
+                targetModes = [cableFreqsC1(3), cableFreqsC1(6)];
+                freqTolerance = 0.10;
+
+                plotFrequencyBandsStft(ax, targetModes, freqTolerance, [0.85 0.85 0.85], 0.5, 'Tolerance Interval');
+                plotHorizontalLines(ax, cableFreqsC1, '--', [0 0 0], 0.3, 'C1 Nat. Freq.');
+                plotHorizontalLines(ax, deckFreqsC1, '-', [0.85 0.33 0.1], 0.2, 'C1 Deck Modes');
+                plotHorizontalLines(ax, cableFreqsC5, ':', [0.2 0.2 0.2], 0.5, 'C5 Nat. Freq.');
+                plotHorizontalLines(ax, deckFreqsC5, '-', [0 0.447 0.741], 0.2, 'C5 Deck Modes');
+            end
+
+            function plotFrequencyBandsStft(ax, centerFreqs, tolerance, bandColor, bandAlpha, displayName)
+                % plotFrequencyBandsStft adds horizontal tolerance regions.
+                if isempty(centerFreqs)
+                    return;
+                end
+                for i = 1:numel(centerFreqs)
+                    yReg = yregion(ax, centerFreqs(i) - tolerance, centerFreqs(i) + tolerance, ...
+                        'FaceColor', bandColor, 'FaceAlpha', bandAlpha, 'EdgeColor', 'none');
+                    if i == 1
+                        yReg.DisplayName = displayName;
+                    else
+                        yReg.HandleVisibility = 'off';
+                    end
+                    uistack(yReg, 'bottom');
+                end
+            end
+
+            function plotHorizontalLines(ax, frequencies, lineStyle, lineColor, lineAlpha, displayName)
+                % plotHorizontalLines adds horizontal reference lines.
+                if isempty(frequencies)
+                    return;
+                end
+                lineObjects = yline(ax, frequencies, lineStyle, 'Color', lineColor, 'Alpha', lineAlpha, 'LineWidth', 1.5);
+                lineObjects(1).DisplayName = displayName;
+                if numel(lineObjects) > 1
+                    set(lineObjects(2:end), 'HandleVisibility', 'off');
+                end
+                uistack(lineObjects, 'bottom');
+            end
 
             function plotEnvironmentalConditions(weather)
-                % Visualizes environmental data including rain, turbulence, wind vectors, and a scatter wind rose.
-
                 plotRainAndAirDensity(nexttile(1), weather);
                 plotWindSpeedAndDirection(nexttile(3), weather);
-
                 nexttile(5);
                 plotTurbulenceWindRose(weather);
             end
 
             function plotRainAndAirDensity(ax, weather)
-                % Plots rain intensity and calculated turbulence intensity.
                 axes(ax);
                 yyaxis left
                 plot(weather.RainIntensity.Time, weather.RainIntensity.Data, 'o-', 'Color', [0.3 0.6 1]);
@@ -566,32 +678,30 @@ classdef BridgeOverview
             end
 
             function airDensityTable = calculateAirDensity(weather)
-                % Computes 10-minute averaged air density from pressure and temperature.
                 pressureTable = timetable(weather.AirPress.Time, weather.AirPress.Data);
                 temperatureTable = timetable(weather.AirTemp.Time, weather.AirTemp.Data);
-
                 synchronizedData = synchronize(pressureTable, temperatureTable, ...
                     'regular', 'mean', 'TimeStep', minutes(10));
 
                 specificGasConstant = 287.05;
                 hPa2Pa = 100;
                 celcius2Kelvin = 273.15;
-                densityValues = (synchronizedData.Var1_pressureTable*hPa2Pa) ./ (specificGasConstant .* (synchronizedData.Var1_temperatureTable + celcius2Kelvin));
 
+                densityValues = (synchronizedData.Var1_pressureTable * hPa2Pa) ./ ...
+                    (specificGasConstant .* (synchronizedData.Var1_temperatureTable + celcius2Kelvin));
                 airDensityTable = synchronizedData;
                 airDensityTable.density = densityValues;
             end
 
             function plotWindSpeedAndDirection(ax, weather)
-                % Plots wind speed and wind direction on the secondary Y-axis.
                 axes(ax);
                 yyaxis left
                 plot(weather.UNormalC1.Time, weather.UNormalC1.Data);
-                ylabel('Wind Speed $\bar{u}_N$ (m/s)','Interpreter','latex');
+                ylabel('Wind Speed $\bar{u}_N$ (m/s)', 'Interpreter', 'latex');
 
                 yyaxis right
                 scatter(weather.PhiC1.Time, weather.PhiC1.Data, 15, 'filled', 'MarkerFaceAlpha', 0.3);
-                ylabel('Wind Direction $\Phi\, (^\circ)$','Interpreter','latex','FontSize',12);
+                ylabel('Wind Direction $\Phi\, (^\circ)$', 'Interpreter', 'latex', 'FontSize', 12);
                 ylim([0 360]);
                 yticks(0:90:360);
                 grid on;
@@ -600,7 +710,6 @@ classdef BridgeOverview
 
             function plotTurbulenceWindRose(weather)
                 tiTable = calculateTurbulenceIntensity(weather.WindSpeed);
-
                 windSpeedTable = retime(timetable(weather.WindSpeed.Time, weather.WindSpeed.Data), ...
                     'regular', @mean, 'TimeStep', minutes(10));
                 windDirTable = retime(timetable(weather.WindDir.Time, weather.WindDir.Data), ...
@@ -617,7 +726,7 @@ classdef BridgeOverview
 
                 set(colorBarHandle, 'location', 'WestOutside', 'TickLabelInterpreter', 'latex');
                 ylabel(colorBarHandle, '$I_u$ (-)', 'Interpreter', 'latex', ...
-                        'Rotation', 0, 'HorizontalAlignment', 'right','FontSize',12);
+                    'Rotation', 0, 'HorizontalAlignment', 'right', 'FontSize', 12);
 
                 bridgeHeading = 342;
                 maxRadialVelocity = max(meanWindSpeed, [], 'omitnan');
@@ -631,7 +740,6 @@ classdef BridgeOverview
             function turbIntensityTable = calculateTurbulenceIntensity(windData)
                 windTable = timetable(windData.Time, windData.Data);
                 windowSize = minutes(10);
-
                 meanWind = retime(windTable, 'regular', @mean, 'TimeStep', windowSize);
                 stdWind = retime(windTable, 'regular', @std, 'TimeStep', windowSize);
 
@@ -642,85 +750,100 @@ classdef BridgeOverview
                 turbIntensityTable.Var1 = tiValues;
             end
 
-            function plotTimeHistory(bTable, cTable, cField, dFields)
+            function plotTimeHistory(bTable, cTable, cField, dFields, hasCable)
                 nexttile(2);
-                plot(cTable.Time, cTable.(cField), 'LineWidth', 1.1, 'DisplayName', strrep(cField,'_',' '));
                 hold on;
-                for field = dFields
+                if hasCable
+                    plot(cTable.Time, cTable.(cField), 'LineWidth', 1.1, 'DisplayName', strrep(cField, '_', ' '));
+                end
+
+                for k = 1:length(dFields)
+                    field = dFields(k);
                     plot(bTable.Time, bTable.(field), 'DisplayName', strrep(field, '_', ' '));
                 end
-                ylabel('Acc. (m/s^2)'); title('Time History'); grid on;
-                legend('Location', 'northeast'); axis tight;
+
+                ylabel('Acc. (m/s^2)');
+                title('Time History');
+                grid on;
+                legend('Location', 'northeast');
+                axis tight;
             end
 
-            function freqResp = plotFrequencyResponse(bTable, cTable, cField, dFields, fLimit, winSec, overlapPct,Nfft)
-                nexttile(4);
-                fsB = 1/median(diff(seconds(bTable.Time - bTable.Time(1))));
-                fsC = 1/median(diff(seconds(cTable.Time - cTable.Time(1))));
-                [pC, fC] = pwelch(double(cTable.(cField)), hamming(round(winSec*fsC)), round(winSec*fsC*overlapPct/100), Nfft, fsC);
-                semilogy(fC, pC, 'LineWidth', 1.2, 'DisplayName', strrep(cField,'_',' ')); hold on;
+            function freqResp = plotFrequencyResponse(bTable, cTable, cField, dFields, fLimit, winSec, overlapPct, Nfft, hasCable)
+                ax = nexttile(4);
+                hold on;
                 freqResp = struct;
-                for field = dFields
+
+                if hasCable
+                    fsC = 1 / median(diff(seconds(cTable.Time - cTable.Time(1))));
+                    [pC, fC] = pwelch(double(cTable.(cField)), hamming(round(winSec*fsC)), round(winSec*fsC*overlapPct/100), Nfft, fsC);
+                    semilogy(fC, pC, 'LineWidth', 1.2, 'DisplayName', strrep(cField, '_', ' '));
+                end
+
+                fsB = 1 / median(diff(seconds(bTable.Time - bTable.Time(1))));
+                for k = 1:length(dFields)
+                    field = dFields(k);
                     [pB, fB] = pwelch(double(bTable.(field)), hamming(round(winSec*fsB)), round(winSec*fsB*overlapPct/100), Nfft, fsB);
                     semilogy(fB, pB, 'DisplayName', strrep(field, '_', ' '));
                     freqResp.(field).frequency = fB;
                     freqResp.(field).response = pB;
                 end
-                xlim([0 fLimit]); grid on;
-                ylabel('PSD ((m/s^2)^2/Hz)'); xlabel('Freq. (Hz)');
-                title('Frequency Response'); legend('Location', 'northeast');
+
+                xlim([0 fLimit]);
+                grid on;
+                ylabel('PSD ((m/s^2)^2/Hz)');
+                xlabel('Freq. (Hz)');
+                title('Frequency Response');
+                legend('Location', 'northeast');
+                set(ax, 'YScale', 'log')
                 addCableFrequencyLines();
             end
 
-            function coCoherence = plotFullCoherence(deckTable, cableTable, cableField, deckFields, fLimit, windowSeconds, overlapPercent, Nfft)
-                % Calculates and plots co-coherence between cable-deck and deck-deck pairs for Bybrua data.
+            function coCoherence = plotFullCoherence(deckTable, cableTable, cableField, deckFields, fLimit, windowSeconds, overlapPercent, Nfft, hasCable)
                 nexttile(6);
                 hold on;
-
-                fsDeck = 1 / median(diff(seconds(deckTable.Time - deckTable.Time(1))));
-                fsCable = 1 / median(diff(seconds(cableTable.Time - cableTable.Time(1))));
-                commonFs = min(fsDeck, fsCable);
-
-                t1 = max(deckTable.Time(1), cableTable.Time(1));
-                t2 = min(deckTable.Time(end), cableTable.Time(end));
-                commonTime = (t1 : seconds(1 / commonFs) : t2)';
-
-                cableSub = retime(cableTable(:, cableField), commonTime, 'linear');
-                windowLength = round(windowSeconds * commonFs);
-                overlapSamples = round(windowLength * overlapPercent / 100);
-
                 coCoherence = struct;
 
-                for i = 1:length(deckFields)
-                    deckField = deckFields{i};
-                    deckSub = retime(deckTable(:, deckField), commonTime, 'linear');
+                % 1. Cable-Deck Coherence (Only if cable data is available)
+                if hasCable
+                    fsDeck = 1 / median(diff(seconds(deckTable.Time - deckTable.Time(1))));
+                    fsCable = 1 / median(diff(seconds(cableTable.Time - cableTable.Time(1))));
+                    commonFs = min(fsDeck, fsCable);
+                    t1 = max(deckTable.Time(1), cableTable.Time(1));
+                    t2 = min(deckTable.Time(end), cableTable.Time(end));
+                    commonTime = (t1 : seconds(1 / commonFs) : t2)';
 
-                    [gamma, f] = calculateCoCoherence(deckSub.(deckField), cableSub.(cableField), windowLength, overlapSamples, Nfft, commonFs);
+                    cableSub = retime(cableTable(:, cableField), commonTime, 'linear');
+                    windowLength = round(windowSeconds * commonFs);
+                    overlapSamples = round(windowLength * overlapPercent / 100);
 
-                    displayName = sprintf('\\gamma: %s - %s', strrep(cableField, '_', ' '), strrep(deckField, '_', ' '));
-                    plot(f, gamma, 'LineWidth', 1.2, 'DisplayName', displayName);
-
-                    coCoherence.(deckField).gamma = gamma;
-                    coCoherence.(deckField).frequency = f;
+                    for k = 1:length(deckFields)
+                        deckField = deckFields(k);
+                        deckSub = retime(deckTable(:, deckField), commonTime, 'linear');
+                        [gamma, f] = calculateCoCoherence(deckSub.(deckField), cableSub.(cableField), windowLength, overlapSamples, Nfft, commonFs);
+                        displayName = sprintf('\\gamma: %s - %s', strrep(cableField, '_', ' '), strrep(deckField, '_', ' '));
+                        plot(f, gamma, 'LineWidth', 1.2, 'DisplayName', displayName);
+                        coCoherence.(deckField).gamma = gamma;
+                        coCoherence.(deckField).frequency = f;
+                    end
                 end
 
+                % 2. Deck-Deck Coherence (Runs regardless of cable data availability)
                 if length(deckFields) > 1
-                    for i = 1:length(deckFields)
-                        for j = i+1:length(deckFields)
-                            fieldA = deckFields{i};
-                            fieldB = deckFields{j};
+                    fsDeck = 1 / median(diff(seconds(deckTable.Time - deckTable.Time(1))));
+                    windowLengthDeck = round(windowSeconds * fsDeck);
+                    overlapSamplesDeck = round(windowLengthDeck * overlapPercent / 100);
 
-                            subA = retime(deckTable(:, fieldA), commonTime, 'linear');
-                            subB = retime(deckTable(:, fieldB), commonTime, 'linear');
-
-                            [gammaDeck, fDeck] = calculateCoCoherence(subA.(fieldA), subB.(fieldB), windowLength, overlapSamples, Nfft, commonFs);
-
+                    for k = 1:length(deckFields)
+                        for j = k+1:length(deckFields)
+                            fieldA = deckFields(k);
+                            fieldB = deckFields(j);
+                            [gammaDeck, fDeck] = calculateCoCoherence(deckTable.(fieldA), deckTable.(fieldB), windowLengthDeck, overlapSamplesDeck, Nfft, fsDeck);
                             displayName = sprintf('\\gamma: %s - %s', strrep(fieldA, '_', ' '), strrep(fieldB, '_', ' '));
                             plot(fDeck, gammaDeck, '--', 'LineWidth', 1.0, 'DisplayName', displayName);
-
-                            structName = [fieldA '2' fieldB];
-                            coCoherence.(structName).gamma = gamma;
-                            coCoherence.(structName).frequency = f;
+                            structName = fieldA + "2" + fieldB;
+                            coCoherence.(structName).gamma = gammaDeck;
+                            coCoherence.(structName).frequency = fDeck;
                         end
                     end
                 end
@@ -730,7 +853,6 @@ classdef BridgeOverview
             end
 
             function [gamma, f] = calculateCoCoherence(sigA, sigB, nWin, nOver, Nfft, fs)
-                % Core calculation for the real part of the complex coherence.
                 [Pxy, f] = cpsd(double(sigA), double(sigB), hamming(nWin), nOver, Nfft, fs);
                 [Pxx, ~] = pwelch(double(sigA), hamming(nWin), nOver, Nfft, fs);
                 [Pyy, ~] = pwelch(double(sigB), hamming(nWin), nOver, Nfft, fs);
@@ -738,7 +860,6 @@ classdef BridgeOverview
             end
 
             function formatCoherencePlot(fLimit)
-                % Applies standard formatting to the coherence plot.
                 xlim([0 fLimit]);
                 ylim([-1 1]);
                 grid on;
@@ -749,31 +870,101 @@ classdef BridgeOverview
             end
 
             function addCableFrequencyLines()
-                % Adds vertical indicators for Bybrua cable natural frequencies.
-                cableFrequencies = [3.111 4.149 6.24];
-                xline(cableFrequencies(1), '--k', 'LineWidth', 2, 'DisplayName', 'Cable Nat. Freq.');
-                if length(cableFrequencies) > 1
-                    xline(cableFrequencies(2:end), '--k', 'LineWidth', 2, 'HandleVisibility', 'off');
+                cableFreqsC1 = [1.03, 2.08, 3.10, 4.15, 5.13, 6.16, 7.32, 8.30, 9.30];
+                deckFreqsC1 = [1.83, 3.52, 5.15];
+
+                cableFreqsC5 = [3.00, 4.60, 5.40, 6.10, 7.60, 9.20];
+                deckFreqsC5 = [1.24, 2.93, 6.03, 6.11];
+
+                targetModes = [cableFreqsC1(3), cableFreqsC1(6)];
+                freqTolerance = 0.10;
+
+                plotFrequencyBands(targetModes, freqTolerance, [0.85 0.85 0.85], 0.5, 'Tolerance Interval');
+
+                plotVerticalLines(cableFreqsC1, '--', [0 0 0], 0.3, 'C1 Nat. Freq.');
+                plotVerticalLines(deckFreqsC1, '-', [0.85 0.33 0.1], 0.2, 'C1 Deck Modes');
+
+                plotVerticalLines(cableFreqsC5, ':', [0.2 0.2 0.2], 0.5, 'C5 Nat. Freq.');
+                plotVerticalLines(deckFreqsC5, '-', [0 0.447 0.741], 0.2, 'C5 Deck Modes');
+            end
+
+            function plotFrequencyBands(centerFreqs, tolerance, bandColor, bandAlpha, displayName)
+                if isempty(centerFreqs)
+                    return;
+                end
+
+                for i = 1:numel(centerFreqs)
+                    xReg = xregion(centerFreqs(i) - tolerance, centerFreqs(i) + tolerance, ...
+                        'FaceColor', bandColor, ...
+                        'FaceAlpha', bandAlpha, ...
+                        'EdgeColor', 'none');
+
+                    if i == 1
+                        xReg.DisplayName = displayName;
+                    else
+                        xReg.HandleVisibility = 'off';
+                    end
+                    uistack(xReg, 'bottom');
                 end
             end
 
-            function plotWaveletCoherence(bTable, cTable, cField, dField, fLimit)
+            function plotVerticalLines(frequencies, lineStyle, lineColor, lineAlpha, displayName)
+                if isempty(frequencies)
+                    return;
+                end
+
+                lineObjects = xline(frequencies, lineStyle, ...
+                    'Color', lineColor, ...
+                    'Alpha', lineAlpha, ...
+                    'LineWidth', 1.5);
+
+                lineObjects(1).DisplayName = displayName;
+
+                if numel(lineObjects) > 1
+                    set(lineObjects(2:end), 'HandleVisibility', 'off');
+                end
+
+                uistack(lineObjects, 'bottom');
+            end
+
+            function plotWaveletCoherence(bTable, cTable, cField, dFields, fLimit, hasCable)
                 nexttile(6);
-                fsB = 1/median(diff(seconds(bTable.Time - bTable.Time(1))));
-                fsC = 1/median(diff(seconds(cTable.Time - cTable.Time(1))));
-                resampleFs = min(fsB, fsC);
-                t1 = max(bTable.Time(1), cTable.Time(1));
-                t2 = min(bTable.Time(end), cTable.Time(end));
-                commonTime = (t1 : seconds(1/resampleFs) : t2)';
-                bSub = retime(bTable(:, dField), commonTime, 'linear');
-                cSub = retime(cTable(:, cField), commonTime, 'linear');
-                [wcoh, ~, fVec, coi] = wcoherence(bSub.(dField), cSub.(cField), resampleFs);
+
+                if hasCable
+                    fsB = 1 / median(diff(seconds(bTable.Time - bTable.Time(1))));
+                    fsC = 1 / median(diff(seconds(cTable.Time - cTable.Time(1))));
+                    resampleFs = min(fsB, fsC);
+                    t1 = max(bTable.Time(1), cTable.Time(1));
+                    t2 = min(bTable.Time(end), cTable.Time(end));
+                    commonTime = (t1 : seconds(1/resampleFs) : t2)';
+
+                    sig1 = retime(bTable(:, dFields(1)), commonTime, 'linear').(dFields(1));
+                    sig2 = retime(cTable(:, cField), commonTime, 'linear').(cField);
+                    titleStr = sprintf('Wavelet: %s - %s', strrep(dFields(1), '_', ' '), strrep(cField, '_', ' '));
+                elseif length(dFields) > 1
+                    resampleFs = 1 / median(diff(seconds(bTable.Time - bTable.Time(1))));
+                    commonTime = bTable.Time;
+                    sig1 = bTable.(dFields(1));
+                    sig2 = bTable.(dFields(2));
+                    titleStr = sprintf('Wavelet: %s - %s', strrep(dFields(1), '_', ' '), strrep(dFields(2), '_', ' '));
+                else
+                    title('Insufficient signals for Wavelet');
+                    return;
+                end
+
+                [wcoh, ~, fVec, coi] = wcoherence(sig1, sig2, resampleFs);
                 imagesc(commonTime, fVec, wcoh);
-                set(gca, 'YDir', 'normal'); hold on;
-                fill([commonTime(1); commonTime(:); commonTime(end)], [0; coi(:); 0], 'w', 'FaceAlpha', 0.3, 'EdgeColor', 'none');
+                set(gca, 'YDir', 'normal');
+                hold on;
+
+                fill([commonTime(1); commonTime(:); commonTime(end)], [0; coi(:); 0], ...
+                    'w', 'FaceAlpha', 0.3, 'EdgeColor', 'none');
                 plot(commonTime, coi, 'w--', 'LineWidth', 1.5);
-                ylim([0 fLimit]); ylabel('Freq. (Hz)');
-                colorbar; title(sprintf('Wavelet: %s', strrep(dField, '_', ' ')));
+
+                ylim([0 fLimit]);
+                ylabel('Freq. (Hz)');
+                colorbar;
+                title(titleStr);
             end
         end
         function mustBePowerOfTwo(value)
@@ -949,7 +1140,7 @@ classdef BridgeOverview
             elseif strcmpi(convert2DispOrVel,'velocity')
                 dataout_type = 2;
             end
-            
+
             if ~isempty(BridgeData)
                 bridgeVars = BridgeData.Properties.VariableNames;
                 bridgeDt = median(diff(seconds((BridgeData.Time-BridgeData.Time(1)))));
@@ -1170,9 +1361,9 @@ classdef BridgeOverview
             elseif spanHours <= 6
                 step = minutes(30);
             elseif spanHours <= 25
-                step = hours(1); 
+                step = hours(1);
             elseif spanHours <= 72
-                step = hours(6); 
+                step = hours(6);
             else
                 step = days(1);
             end
