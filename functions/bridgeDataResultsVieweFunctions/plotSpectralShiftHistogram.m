@@ -1,164 +1,388 @@
 function plotSpectralShiftHistogram(allStats, options)
-    % plotSpectralShiftHistogram creates a 3D histogram of environmental critical peaks by quarter year.
-    %
-    % Environmental peaks are grouped by quarter (Q1-Q4) and displayed as stacked 2D histograms
-    % on the z-axis, showing the distribution of peak frequencies over different quarters.
+    % plotSpectralShiftHistogram Plots layered 3D histograms of spectral shifts over time.
     arguments
-        allStats table
-        options.targetSensors string = ["Conc_Z", "Steel_Z"]
-        options.envFlagField string = 'flag_PSDTotal_inGmm'
-        options.specFlagField string = 'flag_PSDTotalAnd4Hz'
-        options.figureFolder string = ""
-        options.numBins double = 50
+        allStats
+        options.targetSensors (1,:) string = ["Conc_Z", "Steel_Z"]
+        options.envFlagField (1,1) string = "flag_PSDTotal_inGmm"
+        options.specFlagField (1,1) string = "flag_PSDTotalAnd4Hz"
+        options.numTimeChunks (1,1) double = 30
+        options.numHistBins (1,1) double = 50
+        options.timeField (1,1) string = "" 
+        options.weightedHistogram (1,1) logical = true 
+        options.intensityQuantile (1,1) double = 0 
+        options.saveFigure (1,1) logical = false
+        options.figureFolder (1,1) string = ""
+        options.fileName (1,1) string = "SpectralShiftHistogram"
     end
-
-    figHandle = createFigure(9, 'SpectralShift Histogram');
     
-    [peakTimes, peakFreqs, ~, ~, ~, ~, rainValues] = extractSensorPeaks(allStats, options.targetSensors(1), options.specFlagField, options.envFlagField);
+    filteredStats = filterStatsData(allStats, options.envFlagField, options.specFlagField);
+    timeLine = extractTimeLine(filteredStats, options.timeField);
+    [timeIndices, timeEdges] = discretize(timeLine, options.numTimeChunks);
     
-    if ismember(options.envFlagField, allStats.Properties.VariableNames)
-        envFlagArray = table2array(allStats(:, options.envFlagField));
+    chunkMidTimes = timeEdges(1:end-1) + diff(timeEdges)/2;
+    
+    figHandle = createFigure(1, 'Spectral Shift Evolution');
+    layoutObj = tiledlayout('flow', 'TileSpacing', 'compact', 'Padding', 'tight');
+    
+    if options.intensityQuantile > 0 && options.intensityQuantile < 1
+        titleStr = sprintf('Spectral shift evolution, cases with C1 critical weather ($>%.0f^{\\mathrm{th}}$ Percentile Intensities)', ...
+                    options.intensityQuantile * 100);
     else
-        envFlagArray = false(height(allStats), 1);
+        titleStr = 'Spectral shift evolution, cases with C1 critical weather';
     end
-    if ismember('RainIntensity', allStats.Properties.VariableNames)
-        rainArray = table2array(allStats(:, 'RainIntensity'));
-    else
-        rainArray = zeros(height(allStats), 1);
-    end
-    isEnvCritical = envFlagArray & [rainArray.mean]' > 0;
-    envPeakTimes = allStats.duration(isEnvCritical, :);
-    envPeakTimes = mean(envPeakTimes, 2);
+    title(layoutObj, titleStr, 'Interpreter', 'latex', 'FontSize', 14);
     
-    envPeakFreqs = [];
-    envQuarterLabels = {};
-    envQuarterIdx = [];
+    axisArray = gobjects(1, length(options.targetSensors));
     
-    for i = 1:height(allStats)
-        if isEnvCritical(i)
-            sensor = options.targetSensors(1);
-            locations = allStats.psdPeaks(i).(sensor).locations(:);
-            if ~isempty(locations)
-                envPeakFreqs = [envPeakFreqs; locations];
-                qLabel = getQuarterLabel(allStats.duration(i, 1));
-                envQuarterLabels{end+1} = qLabel;
-                envQuarterIdx(end+1) = getQuarterIdx(allStats.duration(i, 1));
-            end
-        end
-    end
-    
-    uniqueQuarters = unique(envQuarterIdx);
-    nQuarters = length(uniqueQuarters);
-    quarterNames = arrayfun(@(q) sprintf('Q%d', mod(q-1, 4)+1), uniqueQuarters, 'UniformOutput', false);
-    quarterColors = lines(nQuarters);
-    
-    freqRange = [min(envPeakFreqs) max(envPeakFreqs)];
-    
-    for qIdx = 1:nQuarters
-        quarterNum = uniqueQuarters(qIdx);
-        mask = envQuarterIdx == quarterNum;
-        freqData = envPeakFreqs(mask);
+    for sensorIdx = 1:length(options.targetSensors)
+        sensorName = options.targetSensors(sensorIdx);
         
-        if ~isempty(freqData) && length(freqData) > 1
-            binEdges = linspace(freqRange(1), freqRange(2), options.numBins+1);
-            n = histc(freqData, binEdges);
-            n = n(1:end-1);  % Remove the last element (overflow bin)
-            n = n(:);
-            
-            binCenters = (binEdges(1:end-1) + binEdges(2:end)) / 2;
-            barWidth = binCenters(2) - binCenters(1);
-            
-            verts = [];
-            faces = [];
-            vertOffset = 0;
-            
-            for b = 1:length(n)
-                if n(b) > 0
-                    x1 = binCenters(b) - barWidth/2;
-                    x2 = binCenters(b) + barWidth/2;
-                    y0 = 0;
-                    y1 = n(b);
-                    z0 = qIdx - 1;
-                    z1 = qIdx;
-                    
-                    v = [x1 y0 z0; x2 y0 z0; x2 y1 z0; x1 y1 z0; x1 y0 z1; x2 y0 z1; x2 y1 z1; x1 y1 z1];
-                    f = [1 2 3 4] + vertOffset;  % bottom
-                    f = [f; 5 6 7 8 + vertOffset];  % top
-                    f = [f; 1 2 6 5 + vertOffset];  % front
-                    f = [f; 3 4 8 7 + vertOffset];  % back
-                    f = [f; 1 4 8 5 + vertOffset];  % left
-                    f = [f; 2 3 7 6 + vertOffset];  % right
-                    
-                    verts = [verts; v];
-                    faces = [faces; f];
-                    vertOffset = vertOffset + 8;
-                end
-            end
-            
-            if ~isempty(verts)
-                patch('Vertices', verts, 'Faces', faces, 'FaceColor', quarterColors(qIdx, :), 'FaceAlpha', 0.7, 'EdgeColor', 'none');
-            end
+        [countsMatrix, binEdges] = calculateHistograms(timeIndices, filteredStats, sensorName, ...
+            options.numTimeChunks, options.numHistBins, options.weightedHistogram, options.intensityQuantile);
+        
+        axObj = nexttile;
+        axisArray(sensorIdx) = axObj;
+        
+        renderLayered3DHistograms(axObj, countsMatrix, binEdges, chunkMidTimes, sensorName, options.weightedHistogram);
+        clim(axObj, [min(chunkMidTimes), max(chunkMidTimes)]);
+    end
+    
+    if length(axisArray) > 1
+        syncRotationLink = linkprop(axisArray, {'View', 'XLim', 'YLim'});
+        setappdata(figHandle, 'SyncRotationLink', syncRotationLink);
+    end
+    
+    applyGlobalLegend(axisArray(1));
+    applyDateColorbar(axisArray(end), chunkMidTimes);
+    
+    if options.saveFigure
+        if strlength(options.figureFolder) == 0
+            error('A valid figureFolder must be provided when saveFigure is true.');
         end
-        hold on;
-    end
-    
-    view(3);
-    grid on;
-    xlabel('Frequency (Hz)', 'Interpreter', 'latex');
-    ylabel('Count', 'Interpreter', 'latex');
-    zlabel('Quarter', 'Interpreter', 'latex');
-    zticks(1:nQuarters);
-    zticklabels(quarterNames);
-    title('Environmental Critical Peaks by Quarter', 'Interpreter', 'latex');
-    set(gca, 'TickLabelInterpreter', 'latex');
-    legend(quarterNames, 'Location', 'northoutside', 'Interpreter', 'latex');
-    
-    if strlength(options.figureFolder) > 0
-        saveName = 'SpectralShiftHistogram_EnvironmentalPeaks';
-        saveFig(figHandle, options.figureFolder, saveName, 2, 1);
-    end
-    
-    function qLabel = getQuarterLabel(t)
-        [y, m] = ymd(t);
-        q = ceil(m / 3);
-        qLabel = sprintf('%d-Q%d', y, q);
-    end
-    
-    function qIdx = getQuarterIdx(t)
-        [y, m] = ymd(t);
-        q = ceil(m / 3);
-        qIdx = (y - year(allStats.duration(1, 1))) * 4 + q;
+        saveFig(figHandle, options.figureFolder, options.fileName, 2);
     end
 end
 
-function [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues] = extractSensorPeaks(allStats, sensor, specFlagField, envFlagField)
-    numRows = height(allStats);
-    peakFreqsCell = cell(numRows, 1);
-    peakIntensitiesCell = cell(numRows, 1);
-    numPeaksArray = zeros(numRows, 1);
+function filteredStats = filterStatsData(allStats, envFlagField, specFlagField)
+    % filterStatsData Filters the dataset based on the provided boolean flag fields.
+    isValidData = allStats.(envFlagField) == true & allStats.(specFlagField) == true;
+    filteredStats = allStats(isValidData, :);
+end
 
-    for i = 1:numRows
-        locations = allStats.psdPeaks(i).(sensor).locations(:);
-        peakFreqsCell{i} = locations;
-        peakIntensitiesCell{i} = allStats.psdPeaks(i).(sensor).logIntensity(:);
-        numPeaksArray(i) = length(locations);
+function timeLine = extractTimeLine(dataTable, timeField)
+    % extractTimeLine Extracts and standardizes the time vector from a table or struct.
+    timeLineRaw = [];
+    
+    if istimetable(dataTable)
+        timeLineRaw = dataTable.Properties.RowTimes;
+    elseif istable(dataTable)
+        vars = dataTable.Properties.VariableNames;
+        if strlength(timeField) > 0 && any(strcmp(vars, timeField))
+            timeLineRaw = dataTable.(timeField);
+        else
+            validNames = ["duration", "Time", "time", "Date", "date", "Timestamp", "timestamp", "Datetime", "datetime"];
+            for name = validNames
+                if any(strcmp(vars, name))
+                    timeLineRaw = dataTable.(name);
+                    break;
+                end
+            end
+        end
+    elseif isstruct(dataTable)
+        fields = fieldnames(dataTable);
+        if strlength(timeField) > 0 && any(strcmp(fields, timeField))
+            timeLineRaw = [dataTable.(timeField)]';
+        else
+            validNames = ["duration", "Time", "time", "Date", "date", "Timestamp", "timestamp", "Datetime", "datetime"];
+            for name = validNames
+                if any(strcmp(fields, name))
+                    timeLineRaw = [dataTable.(name)]';
+                    break;
+                end
+            end
+        end
     end
-
-    peakFreqs = vertcat(peakFreqsCell{:});
-    peakIntensities = vertcat(peakIntensitiesCell{:});
-
-    eventTimes = mean(allStats.duration, 2);
-    specFlagsArray = table2array(allStats(:, specFlagField));
-    envFlagsArray = table2array(allStats(:, envFlagField));
-    if ismember('RainIntensity', allStats.Properties.VariableNames)
-        rainArray = table2array(allStats(:, 'RainIntensity'));
+    
+    if isempty(timeLineRaw)
+        warning('Could not find a valid Time or Date field in allStats. Falling back to row indices.');
+        if istable(dataTable)
+            timeLine = (1:height(dataTable))';
+        else
+            timeLine = (1:length(dataTable))';
+        end
+        return;
+    end
+    
+    if size(timeLineRaw, 2) > 1
+        timeLineRaw = timeLineRaw(:, 1);
+    end
+    
+    if isdatetime(timeLineRaw)
+        timeLine = datenum(timeLineRaw);
+    elseif isstring(timeLineRaw) || iscellstr(timeLineRaw)
+        timeLine = datenum(datetime(timeLineRaw));
     else
-        rainArray = zeros(height(allStats), 1);
+        timeLine = timeLineRaw;
     end
+end
 
-    peakTimes = repelem(eventTimes, numPeaksArray);
-    specFlags = repelem(specFlagsArray, numPeaksArray);
-    envFlags = repelem(envFlagsArray, numPeaksArray);
-    peakDurations = repelem(allStats.duration, numPeaksArray, 1);
-    rainValues = repelem(rainArray(:), numPeaksArray, 1);
+function [countsMatrix, binEdges] = calculateHistograms(timeIndices, filteredStats, sensorName, numTimeChunks, numHistBins, useWeighted, intensityQuantile)
+    % calculateHistograms Extracts locations and computes (weighted or count) histograms per time chunk.
+    [globalLocations, globalIntensities] = extractLocationsFromStats(filteredStats, sensorName);
+    
+    if isempty(globalLocations)
+        binEdges = linspace(0, 1, numHistBins + 1);
+        countsMatrix = zeros(numHistBins, numTimeChunks);
+        return;
+    end
+    
+    if intensityQuantile > 0 && intensityQuantile < 1
+        intensityThreshold = quantile(globalIntensities, intensityQuantile);
+    else
+        intensityThreshold = -Inf;
+    end
+    
+    validGlobalMask = globalIntensities >= intensityThreshold;
+    validGlobalLocations = globalLocations(validGlobalMask);
+    
+    if isempty(validGlobalLocations)
+        binEdges = linspace(0, 1, numHistBins + 1);
+        countsMatrix = zeros(numHistBins, numTimeChunks);
+        return;
+    end
+    
+    binEdges = linspace(min(validGlobalLocations), max(validGlobalLocations), numHistBins + 1);
+    countsMatrix = zeros(numHistBins, numTimeChunks);
+    
+    for chunkIdx = 1:numTimeChunks
+        chunkStats = filteredStats(timeIndices == chunkIdx, :);
+        [chunkLocations, chunkIntensities] = extractLocationsFromStats(chunkStats, sensorName);
+        
+        if ~isempty(chunkLocations)
+            [~, ~, binIdx] = histcounts(chunkLocations, binEdges);
+            validMask = binIdx > 0 & binIdx <= numHistBins & chunkIntensities >= intensityThreshold;
+            validBins = binIdx(validMask);
+            
+            if useWeighted
+                validWeights = chunkIntensities(validMask);
+                nanMask = isnan(validWeights);
+                validBins(nanMask) = [];
+                validWeights(nanMask) = [];
+            else
+                validWeights = ones(size(validBins));
+            end
+            
+            if ~isempty(validBins)
+                countsMatrix(:, chunkIdx) = accumarray(validBins, validWeights, [numHistBins 1]);
+            end
+        end
+    end
+end
+
+function [extractedLocations, extractedIntensities] = extractLocationsFromStats(statsTable, sensorName)
+    % extractLocationsFromStats Safely extracts the locations and true intensities from the nested psdPeaks struct.
+    extractedLocations = [];
+    extractedIntensities = [];
+    
+    if isempty(statsTable)
+        return;
+    end
+    
+    peakStructArray = [statsTable.psdPeaks];
+    if isempty(peakStructArray) || ~isfield(peakStructArray, sensorName)
+        return;
+    end
+    
+    sensorPeaks = [peakStructArray.(sensorName)];
+    if isempty(sensorPeaks) || ~isfield(sensorPeaks, 'locations') || ~isfield(sensorPeaks, 'logIntensity')
+        return;
+    end
+    
+    extractedLocations = vertcat(sensorPeaks.locations);
+    extractedIntensities = exp(vertcat(sensorPeaks.logIntensity)); 
+end
+
+function renderLayered3DHistograms(axObj, countsMatrix, binEdges, chunkTimes, sensorName, useWeighted)
+    % renderLayered3DHistograms Renders the stacked 2D histogram patches in a 3D axes along a true time axis.
+    hold(axObj, 'on');
+    numTimeChunks = length(chunkTimes);
+    layerColors = parula(numTimeChunks);
+    maxFrequencyZ = max(countsMatrix(:));
+    
+    if isempty(maxFrequencyZ) || maxFrequencyZ == 0
+        maxFrequencyZ = 1; 
+    end
+    
+    for chunkIdx = 1:numTimeChunks
+        [xProfile, zProfile] = generateSteppedProfile(binEdges, countsMatrix(:, chunkIdx)');
+        [xLine, zLine] = removeBottomLines(xProfile, zProfile);
+        
+        yProfile = repmat(chunkTimes(chunkIdx), 1, length(xProfile));
+        yLine = repmat(chunkTimes(chunkIdx), 1, length(xLine));
+        
+        fill3(axObj, xProfile, yProfile, zProfile, layerColors(chunkIdx, :), ...
+            'FaceAlpha', 0.85, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+            
+        plot3(axObj, xLine, yLine, zLine, 'k', 'LineWidth', 0.5, 'HandleVisibility', 'off');
+    end
+    
+    timeLimits = [chunkTimes(1), chunkTimes(end)];
+    addAllCableFrequencyLines3D(axObj, timeLimits, maxFrequencyZ);
+    
+    view(axObj, 0, 0);
+    % view(axObj, 25, 10);
+    grid(axObj, 'on');
+    box(axObj, 'on');
+    
+    zlim(axObj, [0, maxFrequencyZ * 1.05]);
+    ylim(axObj, timeLimits); 
+    xlim(axObj, [0 10]);
+
+    pbaspect(axObj, [1.5, 3, 1.3]);
+    
+    title(axObj, strrep(sensorName, '_', '\_'), 'Interpreter', 'latex');
+    xlabel(axObj, 'Frequency (Hz)', 'Interpreter', 'latex');
+    ylabel(axObj, 'Time', 'Interpreter', 'latex');
+    
+    if useWeighted
+        zlabel(axObj, 'Cumulative Intensity', 'Interpreter', 'latex');
+    else
+        zlabel(axObj, 'Count', 'Interpreter', 'latex');
+    end
+    
+    yTicks = yticks(axObj);
+    if max(yTicks) > 693960 
+        timeSpan = timeLimits(2) - timeLimits(1);
+        if timeSpan <= 5
+            dateFmt = 'dd-MMM HH:mm';
+        elseif timeSpan <= 90
+            dateFmt = 'dd-MMM-yyyy';
+        else
+            dateFmt = 'MMM-yyyy';
+        end
+        yticklabels(axObj, string(datetime(yTicks, 'ConvertFrom', 'datenum'), dateFmt));
+    end
+    
+    set(axObj, 'TickLabelInterpreter', 'latex', 'FontSize', 12);
+    hold(axObj, 'off');
+end
+
+function addAllCableFrequencyLines3D(axObj, timeLimits, maxZ)
+    % addAllCableFrequencyLines3D Renders 3D indicator lines for multiple cable and deck frequencies.
+    cableFreqsC1 = [1.03, 2.08, 3.10, 4.15, 5.13, 6.16, 7.32, 8.30, 9.30];
+    deckFreqsC1 = [1.83, 3.52, 5.15];
+    
+    targetModes = [cableFreqsC1(3), cableFreqsC1(6)];
+    freqTolerance = 0.10;
+    
+    for fTarget = targetModes
+        drawToleranceArea(axObj, fTarget, freqTolerance, timeLimits, maxZ);
+    end
+    
+    drawFrequencyLines(axObj, cableFreqsC1, '--', [0 0 0], 0.8, timeLimits, maxZ);
+    drawFrequencyLines(axObj, deckFreqsC1, '--', [0.85 0.33 0.1], 0.8, timeLimits, maxZ);
+end
+
+function drawFrequencyLines(axObj, freqs, lineStyle, color, alphaLevel, timeLimits, maxZ)
+    % drawFrequencyLines Helper to draw lines along the floor and backwall for the timeline.
+    tMin = timeLimits(1);
+    tMax = timeLimits(2);
+    
+    for f = freqs
+        plot3(axObj, [f, f, f], [tMin, tMax, tMax], [0, 0, maxZ], ...
+             'Color', [color, alphaLevel], ...
+             'LineStyle', lineStyle, ...
+             'LineWidth', 1.5, ...
+             'HandleVisibility', 'off');
+    end
+end
+
+function drawToleranceArea(axObj, fTarget, tolerance, timeLimits, maxZ)
+    % drawToleranceArea Generates semi-transparent 2D grey areas indicating the frequency tolerance bounds.
+    tMin = timeLimits(1);
+    tMax = timeLimits(2);
+    fMin = fTarget - tolerance;
+    fMax = fTarget + tolerance;
+    
+    patch(axObj, 'XData', [fMin, fMax, fMax, fMin], ...
+                 'YData', [tMin, tMin, tMax, tMax], ...
+                 'ZData', [0, 0, 0, 0], ...
+                 'FaceColor', [0.85 0.85 0.85], 'FaceAlpha', 0.75, ...
+                 'EdgeColor', 'none', 'HandleVisibility', 'off');
+                 
+    patch(axObj, 'XData', [fMin, fMax, fMax, fMin], ...
+                 'YData', [tMax, tMax, tMax, tMax], ...
+                 'ZData', [0, 0, maxZ, maxZ], ...
+                 'FaceColor', [0.85 0.85 0.85], 'FaceAlpha', 0.75, ...
+                 'EdgeColor', 'none', 'HandleVisibility', 'off');
+end
+
+function [xProfile, zProfile] = generateSteppedProfile(binEdges, counts)
+    % generateSteppedProfile Transforms bin edges and counts into coordinates for a stepped area plot.
+    xProfile = repelem(binEdges, 2);
+    xProfile = xProfile(2:end-1);
+    zProfile = repelem(counts, 2);
+    xProfile = [xProfile(1), xProfile, xProfile(end)];
+    zProfile = [0, zProfile, 0];
+end
+
+function [xLine, zLine] = removeBottomLines(xProfile, zProfile)
+    % removeBottomLines Breaks the outline wherever it is completely flat at Z=0.
+    xLine = xProfile;
+    zLine = zProfile;
+    
+    isBottomHoriz = (zLine(1:end-1) == 0) & (zLine(2:end) == 0) & (xLine(1:end-1) ~= xLine(2:end));
+    insertPos = find(isBottomHoriz);
+    
+    for i = length(insertPos):-1:1
+        idx = insertPos(i);
+        xLine = [xLine(1:idx), NaN, xLine(idx+1:end)];
+        zLine = [zLine(1:idx), NaN, zLine(idx+1:end)];
+    end
+end
+
+function applyGlobalLegend(axObj)
+    % applyGlobalLegend Creates a legend in the upper right corner using dummy 2D objects on an existing axis.
+    hold(axObj, 'on');
+    
+    hTol = patch(axObj, 'XData', NaN, 'YData', NaN, 'FaceColor', [0.85 0.85 0.85], 'FaceAlpha', 0.5, 'EdgeColor', 'none');
+    hC1F = plot(axObj, NaN, NaN, 'Color', [0 0 0 0.8], 'LineStyle', '--', 'LineWidth', 1.2);
+    hC1D = plot(axObj, NaN, NaN, 'Color', [0.85 0.33 0.1 0.8], 'LineStyle', '--', 'LineWidth', 1.2);
+    
+    legend(axObj, [hTol, hC1F, hC1D], ...
+        {'Tolerance Interval', 'C1 Nat. Freq.', 'C1 Deck Modes'}, ...
+        'Location', 'northeast', 'Interpreter', 'latex', 'FontSize', 11);
+end
+
+function applyDateColorbar(axObj, chunkMidTimes)
+    % applyDateColorbar Explicitly targets the axis to prevent the colorbar from disappearing.
+    figHandle = ancestor(axObj, 'figure');
+    colormap(figHandle, parula(length(chunkMidTimes)));
+    
+    cbHandle = colorbar(axObj);
+    cbHandle.Layout.Tile = 'east';
+    cbHandle.Label.String = 'Time';
+    cbHandle.Label.Interpreter = 'latex';
+    cbHandle.TickLabelInterpreter = 'latex';
+    
+    numTicks = min(length(chunkMidTimes), 8);
+    tickIndices = round(linspace(1, length(chunkMidTimes), numTicks));
+    tickValues = chunkMidTimes(tickIndices);
+    
+    cbHandle.Ticks = tickValues;
+    
+    if max(tickValues) < 693960 
+        cbHandle.TickLabels = string(tickValues);
+    else
+        timeSpan = max(tickValues) - min(tickValues);
+        if timeSpan <= 5
+            dateFmt = 'dd-MMM HH:mm';
+        elseif timeSpan <= 90
+            dateFmt = 'dd-MMM-yyyy';
+        else
+            dateFmt = 'MMM-yyyy';
+        end
+        tickDates = datetime(tickValues, 'ConvertFrom', 'datenum');
+        cbHandle.TickLabels = string(tickDates, dateFmt);
+    end
 end

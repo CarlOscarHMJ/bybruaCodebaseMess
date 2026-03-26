@@ -80,7 +80,7 @@ function [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurati
     eventTimes = mean(allStats.duration, 2);
     specFlagsArray = allStats.(specFlagField);
     envFlagsArray = allStats.(envFlagField);
-    rainArray = allStats.RainIntensity;
+    rainArray = [allStats.RainIntensity.mean]';
 
     peakTimes = repelem(eventTimes, numPeaksArray);
     specFlags = repelem(specFlagsArray, numPeaksArray);

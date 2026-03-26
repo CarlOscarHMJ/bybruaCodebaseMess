@@ -554,10 +554,10 @@ classdef BridgeOverview
             plotTimeHistory(bridgeData, cableData, cableField, opts.deckFields, hasCableData);
 
             if strcmpi(displayMode, "stft")
-                freqInfo.freqResp = plotPeriodogram(periodogramContext.currentSensor);
+                [freqInfo.freqResp,ax] = plotPeriodogram(periodogramContext.currentSensor);
                 title(ax, sprintf('STFT Periodogram: %s %s (%s - SPACE:mode X/Y/Z:direction S:save)', periodogramContext.currentSensor, periodogramContext.currentDirection, displayMode), 'FontSize', 10);
             else
-                freqInfo.freqResp = plotFrequencyResponse(periodogramContext.currentSensor);
+                [freqInfo.freqResp,ax] = plotFrequencyResponse(periodogramContext.currentSensor);
                 title(ax, sprintf('Frequency Response (%s %s - SPACE:mode X/Y/Z:direction S:save)', displayMode, periodogramContext.currentDirection), 'FontSize', 10);
             end
 
@@ -643,7 +643,7 @@ classdef BridgeOverview
                 end
             end
 
-            function freqResp = plotPeriodogram(sensorName)
+            function [freqResp,ax] = plotPeriodogram(sensorName)
                 % plotPeriodogram computes and visualizes the STFT spectrogram.
                 persistent freqRespStore;
                 ctx = periodogramContext;
@@ -895,7 +895,7 @@ classdef BridgeOverview
                 drawnow;
             end
 
-            function freqResp = plotFrequencyResponse(sensorName)
+            function [freqResp,ax] = plotFrequencyResponse(sensorName)
                 ctx = periodogramContext;
 
                 ax = nexttile(4);

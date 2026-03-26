@@ -33,10 +33,15 @@ flagNames = ["PSD $\cap$ Coherence", "PSD", "Coherence", "Daniotti\,(2021)","PSD
 
 
 % Additional analysis for eastdac
-% plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSDTotalAnd4Hz')
+plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSDTotal',plotBackground=false)
 % plotSpectralShift(allStats,'flag_EnvironmentalMatch', ["Conc_Z", "Steel_Z"], limits,'local',figureFolder)
-clc
-plotSpectralShiftHistogram(allStats, targetSensors=["Conc_Z", "Steel_Z"], envFlagField='flag_PSDTotal_inGmm', specFlagField='flag_PSDTotalAnd4Hz');
+% clc
+% plotSpectralShiftHistogram(allStats, targetSensors=["Conc_Z", "Steel_Z"], ...
+%                            envFlagField='flag_PSDTotal_inGmm', ...
+%                            specFlagField='flag_PSDTotalAnd4Hz', ...
+%                            numTimeChunks=30, numHistBins=70, ...
+%                            weightedHistogram=false, ...
+%                            intensityQuantile=.95);
 plotFlags = ["flag_PSDTotal","flag_PSD4Hz","flag_PSDTotalAnd4Hz","flag_CohTotal"];
 flagNames = ["PSD", "PSD 4Hz peak", "PSD Total and 4Hz","Coherence"];
 % allStats = plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
