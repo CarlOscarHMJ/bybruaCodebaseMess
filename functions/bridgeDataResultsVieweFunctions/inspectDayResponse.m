@@ -5,12 +5,14 @@ arguments
     endDate 
     options.dataRoot string = '/home/carl/OneDrive/Documents/PhD_Stavanger/ByBrua/Analysis/Data'
     options.cables string = ["C1E_y", "C1W_y"]
+    options.sensor (1,1) string {mustBeMember(options.sensor, ["Conc", "Steel"])} = "Conc"
     options.applyFilter logical = true
     options.filterOrder double = 7
     options.filterLowFreq double = 0.4
     options.filterHighFreq double = 15
     options.nfft double = 2^11
-    options.freqMethod string {mustBeMember(options.freqMethod, ["welch", "stft"])} = "welch"
+    options.freqMethod string {mustBeMember(options.freqMethod, ["welch", "burg", "stft"])} = "welch"
+    options.burgOrder double = 50
     options.figureFolder string = 'figures/RwivDiagnostics'
     options.plotTitle string = ""
 end
@@ -21,7 +23,7 @@ endDate = formatDatetime(endDate, startDate);
 byBroaOverview = initializeBridgeData(startDate, endDate, options);
 
 if strlength(options.plotTitle) == 0
-    options.plotTitle = sprintf('%s to %s', char(startDate), char(endDate));
+    options.plotTitle = sprintf('%s to %s', datestr(startDate, 'dd-mmm-yyyy HH:MM'), datestr(endDate, 'dd-mmm-yyyy HH:MM'));
 end
 
 freqInfo = plotAndSaveDiagnostics(byBroaOverview, options);
@@ -82,28 +84,15 @@ for i = 1:length(options.cables)
     currentCable = options.cables(i);
     try
         freqInfo{i} = byBroaOverview.plotRwivDiagnostic(currentCable, [], ...
+            deckFields=["Conc_Z", "Steel_Z"], ...
+            periodogramSensor=options.sensor, ...
             plotTitle=options.plotTitle, ...
             nfft=options.nfft, ...
-            freqMethod=options.freqMethod);
-            
-        drawnow;
-        
-        if strlength(options.figureFolder) > 0
-            fileName = generateFileName(currentCable, options.plotTitle);
-            savePath = fullfile(options.figureFolder, fileName);
-            exportgraphics(gcf, savePath, 'Resolution', 300);
-        end
+            freqMethod=options.freqMethod, ...
+            burgOrder=options.burgOrder, ...
+            figureFolder=options.figureFolder);
     catch executionError
         warning('Error processing cable %s: %s', currentCable, executionError.message);
     end
 end
-end
-
-function fileName = generateFileName(cableString, titleString)
-% generateFileName constructs a clean file name for the exported diagnostic graphics.
-cleanCable = strrep(char(cableString), '_', '');
-cleanTitle = strrep(char(titleString), ' ', '_');
-cleanTitle = strrep(cleanTitle, ':', '');
-
-fileName = sprintf('RwivDiagnostics_%s_%s.png', cleanCable, cleanTitle);
 end

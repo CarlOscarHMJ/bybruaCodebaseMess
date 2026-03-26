@@ -480,18 +480,27 @@ classdef BridgeOverview
         end
         function freqInfo = plotRwivDiagnostic(self, cableField, timePeriod, opts)
             % plotRwivDiagnostic evaluates and plots bridge and cable response diagnostics.
+            %
+            % Keyboard shortcuts (when figure is active):
+            %   SPACE   - Toggle between PSD (welch) and spectrogram (stft) mode
+            %   X/Y/Z   - Switch to X, Y, or Z direction
+            %   S       - Save figure to disk
+            %
             arguments
                 self
                 cableField string = ""
                 timePeriod = []
                 opts.deckFields (1,:) string = ["Conc_Z", "Steel_Z"]
+                opts.periodogramSensor (1,1) string {mustBeMember(opts.periodogramSensor, ["Conc", "Steel"])} = "Conc"
                 opts.fMax (1,1) double = 10
                 opts.windowSec (1,1) double = 60
                 opts.overlapPct (1,1) double = 50
                 opts.nfft (1,1) double = 256
                 opts.coherenceType (1,1) string {mustBeMember(opts.coherenceType, ["wavelet", "normal"])} = "normal"
-                opts.freqMethod (1,1) string {mustBeMember(opts.freqMethod, ["welch", "stft"])} = "welch"
+                opts.freqMethod (1,1) string {mustBeMember(opts.freqMethod, ["welch", "burg", "stft"])} = "welch"
+                opts.burgOrder (1,1) double = 50
                 opts.plotTitle {mustBeTextScalar} = ""
+                opts.figureFolder string = ""
             end
 
             tic
@@ -515,21 +524,41 @@ classdef BridgeOverview
 
             weatherData = filterWeatherData(self.project.weatherData, timePeriod);
 
-            fig = figure(7); clf;
-            set(fig, 'Name', 'RWIV Diagnostic', 'NumberTitle', 'off');
-            theme('light');
+            fig = createFigure(7, 'RWIV Dashboard');
+
+            persistent periodogramContext displayMode;
+            periodogramContext = struct( ...
+                'bridgeData', bridgeData, ...
+                'cableData', cableData, ...
+                'cableField', cableField, ...
+                'deckFields', opts.deckFields, ...
+                'fMax', opts.fMax, ...
+                'windowSec', opts.windowSec, ...
+                'overlapPct', opts.overlapPct, ...
+                'nfft', opts.nfft, ...
+                'hasCable', hasCableData, ...
+                'freqMethod', opts.freqMethod, ...
+                'burgOrder', opts.burgOrder, ...
+                'currentSensor', opts.periodogramSensor, ...
+                'currentDirection', 'Z', ...
+                'figureFolder', opts.figureFolder, ...
+                'plotTitle', opts.plotTitle ...
+            );
+            displayMode = opts.freqMethod;
+
+            set(fig, 'KeyPressFcn', @(src, event) onKeyPress(event));
 
             tl = tiledlayout(3, 2, 'TileSpacing', 'compact', 'Padding', 'compact');
 
             plotEnvironmentalConditions(weatherData);
             plotTimeHistory(bridgeData, cableData, cableField, opts.deckFields, hasCableData);
 
-            if strcmpi(opts.freqMethod, "stft")
-                freqInfo.freqResp = plotPeriodogram(bridgeData, cableData, cableField, opts.deckFields, ...
-                    opts.fMax, opts.windowSec, opts.overlapPct, opts.nfft, hasCableData);
+            if strcmpi(displayMode, "stft")
+                freqInfo.freqResp = plotPeriodogram(periodogramContext.currentSensor);
+                title(ax, sprintf('STFT Periodogram: %s %s (%s - SPACE:mode X/Y/Z:direction S:save)', periodogramContext.currentSensor, periodogramContext.currentDirection, displayMode), 'FontSize', 10);
             else
-                freqInfo.freqResp = plotFrequencyResponse(bridgeData, cableData, cableField, opts.deckFields, ...
-                    opts.fMax, opts.windowSec, opts.overlapPct, opts.nfft, hasCableData);
+                freqInfo.freqResp = plotFrequencyResponse(periodogramContext.currentSensor);
+                title(ax, sprintf('Frequency Response (%s %s - SPACE:mode X/Y/Z:direction S:save)', displayMode, periodogramContext.currentDirection), 'FontSize', 10);
             end
 
             if strcmpi(opts.coherenceType, "wavelet")
@@ -546,6 +575,59 @@ classdef BridgeOverview
 
             fprintf('Finished Diagnostics plot in %3.1f seconds\n', toc);
 
+            bridgeTimeLimits = [bridgeData.Time(1), bridgeData.Time(end)];
+            linkaxes(findobj(gcf, 'Type', 'axes'), 'x');
+            arrayfun(@(ax) xlim(ax, bridgeTimeLimits), findobj(gcf, 'Type', 'axes'));
+
+            function onKeyPress(event)
+                ctx = periodogramContext;
+                needsUpdate = false;
+
+                if strcmp(event.Key, 'space')
+                    if strcmpi(displayMode, "stft")
+                        displayMode = "welch";
+                    else
+                        displayMode = "stft";
+                    end
+                    needsUpdate = true;
+                elseif any(strcmp(event.Key, {'x', 'y', 'z'}))
+                    periodogramContext.currentDirection = upper(event.Key);
+                    needsUpdate = true;
+                elseif strcmp(event.Key, 's')
+                    saveFigure(ctx);
+                end
+
+                if needsUpdate
+                    ax = nexttile(4);
+                    cla(ax, 'reset');
+                    hold(ax, 'on');
+                    if strcmpi(displayMode, "stft")
+                        plotPeriodogram(ctx.currentSensor);
+                    else
+                        plotFrequencyResponse(ctx.currentSensor);
+                    end
+                    uistack(ax, 'top');
+                    directionLabel = periodogramContext.currentDirection;
+                    title(ax, sprintf('Frequency Response (%s %s - SPACE:mode X/Y/Z:direction S:save)', displayMode, directionLabel), 'FontSize', 10);
+                    drawnow;
+                end
+            end
+
+            function saveFigure(ctx)
+                if strlength(ctx.figureFolder) > 0
+                    if ~exist(ctx.figureFolder, 'dir')
+                        mkdir(ctx.figureFolder);
+                    end
+                    cableStr = strrep(char(ctx.cableField), '_', '');
+                    titleStr = strrep(char(ctx.plotTitle), ' ', '_');
+                    titleStr = strrep(titleStr, ':', '');
+                    fileName = sprintf('Rwiv_%s_%s_%s_%s.png', cableStr, ctx.currentSensor, ctx.currentDirection, titleStr);
+                    savePath = fullfile(ctx.figureFolder, fileName);
+                    exportgraphics(gcf, savePath, 'Resolution', 300);
+                    fprintf('Saved: %s\n', savePath);
+                end
+            end
+
             function filteredWeather = filterWeatherData(weather, timeRange)
                 % filterWeatherData restricts weather timetables to the specified time period.
                 filteredWeather = weather;
@@ -561,49 +643,56 @@ classdef BridgeOverview
                 end
             end
 
-            function freqResp = plotPeriodogram(bTable, cTable, cField, dFields, fLimit, winSec, overlapPct, nfftVal, hasCable)
+            function freqResp = plotPeriodogram(sensorName)
                 % plotPeriodogram computes and visualizes the STFT spectrogram.
+                persistent freqRespStore;
+                ctx = periodogramContext;
+                targetField = sensorName + "_" + ctx.currentDirection;
+
                 ax = nexttile(4);
-                freqResp = struct;
+                cla(ax, 'reset');
+                hold(ax, 'on');
 
-                if hasCable
-                    fs = 1 / median(diff(seconds(cTable.Time - cTable.Time(1))));
-                    winSamples = round(winSec * fs);
-                    overlapSamples = round(winSamples * (overlapPct / 100));
+                if ctx.hasCable
+                    fs = 1 / median(diff(seconds(ctx.cableData.Time - ctx.cableData.Time(1))));
+                    winSamples = round(ctx.windowSec * fs);
+                    overlapSamples = round(winSamples * (ctx.overlapPct / 100));
 
-                    [~, fAxis, tAxis, pAxis] = spectrogram(double(cTable.(cField)), hamming(winSamples), overlapSamples, nfftVal, fs);
-                    imagesc(ax, tAxis, fAxis, 10*log10(pAxis));
-                    freqResp.(cField).time = tAxis;
-                    freqResp.(cField).frequency = fAxis;
-                    freqResp.(cField).response = pAxis;
-                    plotLabel = strrep(cField, '_', ' ');
+                    [~, fAxis, tAxis, pAxis] = spectrogram(double(ctx.cableData.(ctx.cableField)), hamming(winSamples), overlapSamples, ctx.nfft, fs);
+                    pAxis(pAxis <= 0) = eps;
+                    imagesc(ax, tAxis, fAxis, log(pAxis));
+                    freqResp.(ctx.cableField).time = tAxis;
+                    freqResp.(ctx.cableField).frequency = fAxis;
+                    freqResp.(ctx.cableField).response = log(pAxis);
+                    plotLabel = strrep(ctx.cableField, '_', ' ');
                 else
-                    fs = 1 / median(diff(seconds(bTable.Time - bTable.Time(1))));
-                    targetField = dFields(1);
-                    winSamples = round(winSec * fs);
-                    overlapSamples = round(winSamples * (overlapPct / 100));
+                    fs = 1 / median(diff(seconds(ctx.bridgeData.Time - ctx.bridgeData.Time(1))));
+                    winSamples = round(ctx.windowSec * fs);
+                    overlapSamples = round(winSamples * (ctx.overlapPct / 100));
 
-                    [~, fAxis, tAxis, pAxis] = spectrogram(double(bTable.(targetField)), hamming(winSamples), overlapSamples, nfftVal, fs);
-                    imagesc(ax, tAxis, fAxis, 10*log10(pAxis));
+                    [~, fAxis, tAxis, pAxis] = spectrogram(double(ctx.bridgeData.(targetField)), hamming(winSamples), overlapSamples, ctx.nfft, fs);
+                    pAxis(pAxis <= 0) = eps;
+                    imagesc(ax, tAxis, fAxis, log(pAxis));
                     freqResp.(targetField).time = tAxis;
                     freqResp.(targetField).frequency = fAxis;
-                    freqResp.(targetField).response = pAxis;
+                    freqResp.(targetField).response = log(pAxis);
                     plotLabel = strrep(targetField, '_', ' ');
                 end
 
                 axis(ax, 'xy');
-                ylim(ax, [0 fLimit]);
+                ylim(ax, [0 ctx.fMax]);
                 colormap(ax, jet);
 
                 cBar = colorbar(ax);
-                cBar.Label.String = 'Power/Frequency (dB/Hz)';
-                cBar.Label.Interpreter = 'latex';
+                cBar.Label.String = 'log(m^2 s^{-4} Hz^{-1})';
+                cBar.Label.Interpreter = 'tex';
 
                 ylabel(ax, 'Frequency (Hz)', 'Interpreter', 'latex');
                 xlabel(ax, 'Time (s)', 'Interpreter', 'latex');
                 title(ax, sprintf('STFT Periodogram: %s', plotLabel), 'Interpreter', 'latex');
 
                 addCableFrequencyLinesStft(ax);
+                freqRespStore = freqResp;
             end
 
             function addCableFrequencyLinesStft(ax)
@@ -675,6 +764,7 @@ classdef BridgeOverview
                     'Color', [0.85 0.33 0.1], 'MarkerFaceColor', [0.85 0.33 0.1]);
                 ylabel('Density of Air $\mathrm{(kg/m^3)}$', 'Interpreter', 'latex');
                 ylim([1.1 1.3]);
+                axis tight;
             end
 
             function airDensityTable = calculateAirDensity(weather)
@@ -706,6 +796,7 @@ classdef BridgeOverview
                 yticks(0:90:360);
                 grid on;
                 title('Wind angle on C1');
+                axis tight;
             end
 
             function plotTurbulenceWindRose(weather)
@@ -751,50 +842,116 @@ classdef BridgeOverview
             end
 
             function plotTimeHistory(bTable, cTable, cField, dFields, hasCable)
-                nexttile(2);
+                ax = nexttile(2);
                 hold on;
                 if hasCable
-                    plot(cTable.Time, cTable.(cField), 'LineWidth', 1.1, 'DisplayName', strrep(cField, '_', ' '));
+                    hCable = plot(cTable.Time, cTable.(cField), 'LineWidth', 1.1, 'DisplayName', strrep(cField, '_', ' '));
                 end
 
+                titleStr = 'Time History (click sensor to update frequency plot)';
+                
+                stdVals = zeros(length(dFields),1);
                 for k = 1:length(dFields)
                     field = dFields(k);
-                    plot(bTable.Time, bTable.(field), 'DisplayName', strrep(field, '_', ' '));
+                    stdVals(k) = std(bTable.(field));
+                end
+                
+                [~,idx]= sort(stdVals,'descend');
+
+                for k = 1:length(idx)
+                    field = dFields(idx(k));
+                    sensorName = extractBefore(field, '_');
+                    hSensor = plot(bTable.Time, bTable.(field), 'DisplayName', strrep(field, '_', ' '), ...
+                        'ButtonDownFcn', @(src,~) onSensorClick(sensorName));
+                    src.LineWidth = 2;
+                    src.Marker = 'none';
                 end
 
-                ylabel('Acc. (m/s^2)');
-                title('Time History');
+                ylabel('Acc. (m/s$^2$)');
+                title(titleStr);
                 grid on;
                 legend('Location', 'northeast');
                 axis tight;
             end
 
-            function freqResp = plotFrequencyResponse(bTable, cTable, cField, dFields, fLimit, winSec, overlapPct, Nfft, hasCable)
+            function onSensorClick(sensorName)
+                periodogramContext.currentSensor = sensorName;
+                ctx = periodogramContext;
                 ax = nexttile(4);
-                hold on;
+                cla(ax, 'reset');
+                hold(ax, 'on');
+                if strcmpi(displayMode, "stft")
+                    plotPeriodogram(sensorName);
+                else
+                    plotFrequencyResponse(sensorName);
+                end
+                uistack(ax, 'top');
+                directionLabel = periodogramContext.currentDirection;
+                if strcmpi(displayMode, "stft")
+                    title(ax, sprintf('STFT Periodogram: %s %s (%s - SPACE:mode X/Y/Z:direction S:save)', sensorName, directionLabel, displayMode), 'FontSize', 10);
+                else
+                    title(ax, sprintf('Frequency Response (%s %s - SPACE:mode X/Y/Z:direction S:save)', displayMode, directionLabel), 'FontSize', 10);
+                end
+                drawnow;
+            end
+
+            function freqResp = plotFrequencyResponse(sensorName)
+                ctx = periodogramContext;
+
+                ax = nexttile(4);
+                cla(ax, 'reset');
+                hold(ax, 'on');
                 freqResp = struct;
 
-                if hasCable
-                    fsC = 1 / median(diff(seconds(cTable.Time - cTable.Time(1))));
-                    [pC, fC] = pwelch(double(cTable.(cField)), hamming(round(winSec*fsC)), round(winSec*fsC*overlapPct/100), Nfft, fsC);
-                    semilogy(fC, pC, 'LineWidth', 1.2, 'DisplayName', strrep(cField, '_', ' '));
+                if ctx.hasCable
+                    fsC = 1 / median(diff(seconds(ctx.cableData.Time - ctx.cableData.Time(1))));
+                    [pC, fC] = pwelch(double(ctx.cableData.(ctx.cableField)), hamming(round(ctx.windowSec*fsC)), round(ctx.windowSec*fsC*ctx.overlapPct/100), ctx.nfft, fsC);
+                    semilogy(ax, fC, pC, 'LineWidth', 1.2, 'DisplayName', strrep(ctx.cableField, '_', ' '));
                 end
 
-                fsB = 1 / median(diff(seconds(bTable.Time - bTable.Time(1))));
-                for k = 1:length(dFields)
-                    field = dFields(k);
-                    [pB, fB] = pwelch(double(bTable.(field)), hamming(round(winSec*fsB)), round(winSec*fsB*overlapPct/100), Nfft, fsB);
-                    semilogy(fB, pB, 'DisplayName', strrep(field, '_', ' '));
+                fsB = 1 / median(diff(seconds(ctx.bridgeData.Time - ctx.bridgeData.Time(1))));
+                fieldsToPlot = ctx.deckFields;
+                if strcmpi(displayMode, "stft")
+                    fieldsToPlot = sensorName + "_" + ctx.currentDirection;
+                else
+                    fieldsToPlot = arrayfun(@(f) extractBefore(f, '_') + "_" + ctx.currentDirection, ctx.deckFields, 'UniformOutput', false);
+                    fieldsToPlot = string(fieldsToPlot);
+                end
+
+                for k = 1:length(fieldsToPlot)
+                    field = fieldsToPlot(k);
+                    if strcmpi(ctx.freqMethod, "burg")
+                        [pB, fB] = pburg(double(ctx.bridgeData.(field)), ctx.burgOrder, ctx.nfft, fsB);
+                    else
+                        [pB, fB] = pwelch(double(ctx.bridgeData.(field)), hamming(round(ctx.windowSec*fsB)), round(ctx.windowSec*fsB*ctx.overlapPct/100), ctx.nfft, fsB);
+                    end
+
+                    semilogy(ax, fB, pB, 'DisplayName', strrep(field, '_', ' '));
                     freqResp.(field).frequency = fB;
                     freqResp.(field).response = pB;
+
+                    try
+                        logPsd = log(pB);
+                        relIdx = fB >= 0.4 & fB <= ctx.fMax;
+                        [peaks, locs] = findpeaks(logPsd(relIdx), fB(relIdx), 'MinPeakProminence', 4);
+                        if ~isempty(locs)
+                            peakVals = arrayfun(@(x) pB(find(abs(fB - x) < 1e-6, 1)), locs);
+                            plot(ax, locs, peakVals, '^', 'Color', 'r', 'MarkerSize', 5, 'MarkerFaceColor', 'r', ...
+                                'HandleVisibility','off');
+                            freqResp.(field).peaks.locations = locs;
+                            freqResp.(field).peaks.intensity = peaks;
+                        end
+                    catch
+                        freqResp.(field).peaks = struct('locations', [], 'intensity', []);
+                    end
                 end
 
-                xlim([0 fLimit]);
+                xlim([0 ctx.fMax]);
                 grid on;
-                ylabel('PSD ((m/s^2)^2/Hz)');
+                ylabel('PSD ((m/s$^2$)$^2$/Hz)');
                 xlabel('Freq. (Hz)');
-                title('Frequency Response');
-                legend('Location', 'northeast');
+                title(ax, sprintf('Frequency Response (%s)', ctx.freqMethod));
+                legend(ax, 'Location', 'northeast');
                 set(ax, 'YScale', 'log')
                 addCableFrequencyLines();
             end
