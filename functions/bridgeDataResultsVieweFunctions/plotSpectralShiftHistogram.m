@@ -22,7 +22,7 @@ function plotSpectralShiftHistogram(allStats, options)
     chunkMidTimes = timeEdges(1:end-1) + diff(timeEdges)/2;
     
     figHandle = createFigure(1, 'Spectral Shift Evolution');
-    layoutObj = tiledlayout('flow', 'TileSpacing', 'compact', 'Padding', 'tight');
+    layoutObj = tiledlayout(1,2, 'TileSpacing', 'compact', 'Padding', 'tight');
     
     if options.intensityQuantile > 0 && options.intensityQuantile < 1
         titleStr = sprintf('Spectral shift evolution, cases with C1 critical weather ($>%.0f^{\\mathrm{th}}$ Percentile Intensities)', ...
@@ -59,7 +59,7 @@ function plotSpectralShiftHistogram(allStats, options)
         if strlength(options.figureFolder) == 0
             error('A valid figureFolder must be provided when saveFigure is true.');
         end
-        saveFig(figHandle, options.figureFolder, options.fileName, 2);
+        saveFig(figHandle, options.figureFolder, options.fileName, 2,scaleFigure=false);
     end
 end
 

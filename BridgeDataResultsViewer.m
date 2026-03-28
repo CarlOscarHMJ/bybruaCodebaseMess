@@ -33,7 +33,7 @@ flagNames = ["PSD $\cap$ Coherence", "PSD", "Coherence", "Daniotti\,(2021)","PSD
 
 
 % Additional analysis for eastdac
-plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSDTotal',plotBackground=false)
+% plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSDTotal',plotBackground=false,plotAllDirections=true)
 % plotSpectralShift(allStats,'flag_EnvironmentalMatch', ["Conc_Z", "Steel_Z"], limits,'local',figureFolder)
 % clc
 % plotSpectralShiftHistogram(allStats, targetSensors=["Conc_Z", "Steel_Z"], ...
@@ -41,10 +41,12 @@ plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagFie
 %                            specFlagField='flag_PSDTotalAnd4Hz', ...
 %                            numTimeChunks=30, numHistBins=70, ...
 %                            weightedHistogram=false, ...
-%                            intensityQuantile=.95);
-plotFlags = ["flag_PSDTotal","flag_PSD4Hz","flag_PSDTotalAnd4Hz","flag_CohTotal"];
-flagNames = ["PSD", "PSD 4Hz peak", "PSD Total and 4Hz","Coherence"];
-% allStats = plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
+%                            intensityQuantile=.75, ...
+%                            figureFolder=figureFolder,saveFigure=true);
+plotFlags = ["flag_PSD_Any3Points","flag_PSD_Any4Points","flag_PSDTotal","flag_PSDTotalAnd4Hz"];
+flagNames = ["PSD ($\ge$ 3 Peaks Any Dir.)","PSD ($\ge$ 4 Peaks Any Dir.)","PSD Total","PSD Total $\cup$ 4Hz"];
+%allStats = plotNidComparison(allStats, plotFlags, limits, 'local', figureFolder, flagNames, false, 10, 1);
+plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSD_Any4Points',plotBackground=true,plotAllDirections=false)
 
 % plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
 % plotNidComparison(allStats,plotFlags,limits,'global',figureFolder);
@@ -130,99 +132,109 @@ else
 end
 end
 
-function StatsTable = applyAnalysisFlags(StatsTable, Thresholds)
-    NumberSegments = height(StatsTable);
+function statsTable = applyAnalysisFlags(statsTable, thresholds)
+    % applyAnalysisFlags sets logical flags based on peak frequencies, coherence, wind and rain limits.
+
+    psdFlags = extractPsdFlags(statsTable, thresholds.targetFreqs, thresholds.freqTolerance);
+    [flagAny3Points, flagAny4Points] = calculateDirectionalFlags(psdFlags);
     
-    TargetFreq1 = Thresholds.targetFreqs(1); 
-    TargetFreq2 = Thresholds.targetFreqs(2);
-    TargetFreq3 = Thresholds.targetFreqs(3);
-    Tolerance = Thresholds.freqTolerance;
+    statsTable.flag_PSD_Any3Points = flagAny3Points;
+    statsTable.flag_PSD_Any4Points = flagAny4Points;
+
+    statsTable.flag_PSD_Conc_F1 = psdFlags.Conc_Z.mode1;
+    statsTable.flag_PSD_Conc_F2 = psdFlags.Conc_Z.mode2;
+    statsTable.flag_PSD_Conc_F3 = psdFlags.Conc_Z.mode3;
+    statsTable.flag_PSD_Steel_F1 = psdFlags.Steel_Z.mode1;
+    statsTable.flag_PSD_Steel_F2 = psdFlags.Steel_Z.mode2;
+    statsTable.flag_PSD_Steel_F3 = psdFlags.Steel_Z.mode3;
     
-    fields = string(fieldnames(StatsTable.psdPeaks))';
+    statsTable.flag_PSDTotal = (psdFlags.Conc_Z.mode1 & psdFlags.Conc_Z.mode3) & ...
+                               (psdFlags.Steel_Z.mode1 & psdFlags.Steel_Z.mode3);
+
+    statsTable.flag_PSD4Hz = psdFlags.Conc_Z.mode2 & psdFlags.Steel_Z.mode2;
+    statsTable.flag_PSDTotalAnd4Hz = statsTable.flag_PSDTotal | statsTable.flag_PSD4Hz;
+    
+    sampleDate = mean(statsTable.duration, 2);
+    statsTable.flag_PSDTotal_Before2021 = statsTable.flag_PSDTotal & (sampleDate < datetime(2021, 1, 1));
+    statsTable.flag_PSDTotal_After2021 = statsTable.flag_PSDTotal & (sampleDate > datetime(2021, 1, 1));
+    
+    statsTable.flag_PSDAllDirections = psdFlags.Conc_X.mode1 & psdFlags.Conc_X.mode3 & ...
+                                       psdFlags.Conc_Y.mode1 & psdFlags.Conc_Y.mode3 & ...
+                                       psdFlags.Conc_Z.mode1 & psdFlags.Conc_Z.mode3 & ...
+                                       psdFlags.Steel_X.mode1 & psdFlags.Steel_X.mode3 & ...
+                                       psdFlags.Steel_Y.mode1 & psdFlags.Steel_Y.mode3 & ...
+                                       psdFlags.Steel_Z.mode1 & psdFlags.Steel_Z.mode3;
+    
+    statsTable.flag_PSDSelectedCs = psdFlags.Conc_X.mode1 & psdFlags.Conc_X.mode3 & ...
+                                    psdFlags.Conc_Y.mode1 & psdFlags.Conc_Y.mode3 & ...
+                                    psdFlags.Conc_Z.mode3 & ...
+                                    psdFlags.Steel_X.mode1 & psdFlags.Steel_X.mode3 & ...
+                                    psdFlags.Steel_Y.mode1;
+
+    coherenceMatrix = [statsTable.cohVals.Z]';
+    statsTable.flag_Coh_F1 = coherenceMatrix(:, 1) <= thresholds.coherenceLimit(1);
+    statsTable.flag_Coh_F2 = coherenceMatrix(:, 2) >= thresholds.coherenceLimit(2);
+    statsTable.flag_CohTotal = statsTable.flag_Coh_F1 & statsTable.flag_Coh_F2;
+    
+    windSpeedMean = [statsTable.WindSpeed.mean]';
+    phiC1Mean = [statsTable.PhiC1.mean]';
+    rainIntensity = [statsTable.RainIntensity.mean]';
+
+    statsTable.flag_WindSpd = windSpeedMean >= thresholds.cableWindSpeed(1) & windSpeedMean <= thresholds.cableWindSpeed(2);
+    statsTable.flag_WindAng = phiC1Mean >= thresholds.cableWindDir(1) & phiC1Mean <= thresholds.cableWindDir(2);
+    statsTable.flag_Rain = rainIntensity > thresholds.rainLowerLimit;
+    
+    statsTable.flag_StructuralResponseMatch = statsTable.flag_PSDTotal & statsTable.flag_CohTotal;
+    statsTable.flag_EnvironmentalMatch = statsTable.flag_WindSpd & statsTable.flag_WindAng & statsTable.flag_Rain;
+    statsTable.flag_allFlags = statsTable.flag_StructuralResponseMatch & statsTable.flag_EnvironmentalMatch;
+end
+
+function psdFlags = extractPsdFlags(statsTable, targetFreqs, tolerance)
+    % extractPsdFlags creates logical arrays indicating presence of target frequencies for all sensors.
+    fields = string(fieldnames(statsTable.psdPeaks))';
+    numSegments = height(statsTable);
+    
     for field = fields
-        PsdFlag.(field).Mode1 = false(NumberSegments, 1);
-        PsdFlag.(field).Mode2 = false(NumberSegments, 1);
-        PsdFlag.(field).Mode3 = false(NumberSegments, 1);
+        psdFlags.(field).mode1 = false(numSegments, 1);
+        psdFlags.(field).mode2 = false(numSegments, 1);
+        psdFlags.(field).mode3 = false(numSegments, 1);
     end
-
-    for i = 1:NumberSegments
+    
+    for i = 1:numSegments
         for field = fields
-            if isstruct(StatsTable.psdPeaks) && isfield(StatsTable.psdPeaks, field)
-                PeakFrequencies = StatsTable.psdPeaks(i).(field).locations;
-                
-                if any(PeakFrequencies >= (TargetFreq1 - Tolerance) & PeakFrequencies <= (TargetFreq1 + Tolerance))
-                    PsdFlag.(field).Mode1(i) = true;
-                end
-                
-                if any(PeakFrequencies >= (TargetFreq2 - Tolerance) & PeakFrequencies <= (TargetFreq2 + Tolerance))
-                    PsdFlag.(field).Mode2(i) = true;
-                end
-
-                if any(PeakFrequencies >= (TargetFreq3 - Tolerance) & PeakFrequencies <= (TargetFreq3 + Tolerance))
-                    PsdFlag.(field).Mode3(i) = true;
-                end
+            if isstruct(statsTable.psdPeaks) && isfield(statsTable.psdPeaks, field)
+                peaks = statsTable.psdPeaks(i).(field).locations;
+                psdFlags.(field).mode1(i) = any(abs(peaks - targetFreqs(1)) <= tolerance);
+                psdFlags.(field).mode2(i) = any(abs(peaks - targetFreqs(2)) <= tolerance);
+                psdFlags.(field).mode3(i) = any(abs(peaks - targetFreqs(3)) <= tolerance);
             end
         end
     end
-    
-    CoherenceMatrix = [StatsTable.cohVals.Z]';
-    CoherenceFlagMode1 = CoherenceMatrix(:,1) <= Thresholds.coherenceLimit(1);
-    CoherenceFlagMode2 = CoherenceMatrix(:,2) >= Thresholds.coherenceLimit(2);
-    
-    UNormalC1_mean  = [StatsTable.UNormalC1.mean];
-    WindSpeed_mean  = [StatsTable.WindSpeed.mean];
-    PhiC1_mean      = [StatsTable.PhiC1.mean];
-    RainIntensity   = [StatsTable.RainIntensity.mean];
+end
 
-    % EnvironmentalWindSpeedFlag = (UNormalC1_mean >= Thresholds.cableWindSpeed(1)...
-    %                             & UNormalC1_mean <= Thresholds.cableWindSpeed(2)).';
-    EnvironmentalWindSpeedFlag = (WindSpeed_mean >= Thresholds.cableWindSpeed(1)...
-                                & WindSpeed_mean <= Thresholds.cableWindSpeed(2)).';
-    EnvironmentalWindAngleFlag = (PhiC1_mean >= Thresholds.cableWindDir(1)...
-                                & PhiC1_mean <= Thresholds.cableWindDir(2)).';
-    EnvironmentalRainFlag = (RainIntensity > Thresholds.rainLowerLimit).'; 
+function [flag3Points, flag4Points] = calculateDirectionalFlags(psdFlags)
+    % calculateDirectionalFlags computes the 3-point and 4-point directional criteria.
+    directions = ["X", "Y", "Z"];
+    numSegments = length(psdFlags.Conc_Z.mode1);
     
-    sampleDate = mean(StatsTable.duration,2);
+    flag3Points = false(numSegments, 1);
+    flag4Points = false(numSegments, 1);
     
-    StatsTable.flag_PSD_Conc_F1 = PsdFlag.Conc_Z.Mode1;
-    StatsTable.flag_PSD_Conc_F2 = PsdFlag.Conc_Z.Mode2;
-    StatsTable.flag_PSD_Conc_F3 = PsdFlag.Conc_Z.Mode3;
-    StatsTable.flag_PSD_Steel_F1 = PsdFlag.Steel_Z.Mode1;
-    StatsTable.flag_PSD_Steel_F2 = PsdFlag.Steel_Z.Mode2;
-    StatsTable.flag_PSD_Steel_F3 = PsdFlag.Steel_Z.Mode3;
-    StatsTable.flag_PSDTotal = (PsdFlag.Conc_Z.Mode1 & PsdFlag.Conc_Z.Mode3) & (PsdFlag.Steel_Z.Mode1 & PsdFlag.Steel_Z.Mode3);
-
-    StatsTable.flag_PSD4Hz = PsdFlag.Conc_Z.Mode2 & PsdFlag.Steel_Z.Mode2;
-    StatsTable.flag_PSDTotalAnd4Hz = StatsTable.flag_PSDTotal | StatsTable.flag_PSD4Hz;
-
-    StatsTable.flag_PSDTotal_Before2021 = StatsTable.flag_PSDTotal & sampleDate < datetime(2021,1,1);
-    StatsTable.flag_PSDTotal_After2021 = StatsTable.flag_PSDTotal & sampleDate > datetime(2021,1,1);
-
-    StatsTable.flag_PSDAllDirections = PsdFlag.Conc_X.Mode1 & PsdFlag.Conc_X.Mode3 & ...
-                                       PsdFlag.Conc_Y.Mode1 & PsdFlag.Conc_Y.Mode3 & ...
-                                       PsdFlag.Conc_Z.Mode1 & PsdFlag.Conc_Z.Mode3 & ...
-                                       PsdFlag.Steel_X.Mode1 & PsdFlag.Steel_X.Mode3 & ...
-                                       PsdFlag.Steel_Y.Mode1 & PsdFlag.Steel_Y.Mode3 & ...
-                                       PsdFlag.Steel_Z.Mode1 & PsdFlag.Steel_Z.Mode3;
-    
-    StatsTable.flag_PSDSelectedCs = PsdFlag.Conc_X.Mode1 & PsdFlag.Conc_X.Mode3 & ...
-                                    PsdFlag.Conc_Y.Mode1 & PsdFlag.Conc_Y.Mode3 & ...
-                                                           PsdFlag.Conc_Z.Mode3 & ...
-                                    PsdFlag.Steel_X.Mode1 & PsdFlag.Steel_X.Mode3 & ...
-                                    PsdFlag.Steel_Y.Mode1;
-
-    StatsTable.flag_Coh_F1 = CoherenceFlagMode1;
-    StatsTable.flag_Coh_F2 = CoherenceFlagMode2;
-    StatsTable.flag_CohTotal = (CoherenceFlagMode1 & CoherenceFlagMode2);
-    
-    StatsTable.flag_WindSpd = EnvironmentalWindSpeedFlag;
-    StatsTable.flag_WindAng = EnvironmentalWindAngleFlag;
-    StatsTable.flag_Rain = EnvironmentalRainFlag;
-    
-    StatsTable.flag_StructuralResponseMatch = StatsTable.flag_PSDTotal & StatsTable.flag_CohTotal;
-    StatsTable.flag_EnvironmentalMatch = EnvironmentalWindSpeedFlag & EnvironmentalWindAngleFlag & EnvironmentalRainFlag;
-    
-    StatsTable.flag_allFlags = StatsTable.flag_StructuralResponseMatch & StatsTable.flag_EnvironmentalMatch;
+    for dir = directions
+        concField = "Conc_" + dir;
+        steelField = "Steel_" + dir;
+        
+        if isfield(psdFlags, concField) && isfield(psdFlags, steelField)
+            totalPoints = psdFlags.(concField).mode1 + psdFlags.(concField).mode2 + psdFlags.(concField).mode3 + ...
+                          psdFlags.(steelField).mode1 + psdFlags.(steelField).mode2 + psdFlags.(steelField).mode3;
+            
+            fourPointsCond = psdFlags.(concField).mode1 & psdFlags.(concField).mode3 & ...
+                             psdFlags.(steelField).mode1 & psdFlags.(steelField).mode3;
+                             
+            flag3Points = flag3Points | (totalPoints >= 3);
+            flag4Points = flag4Points | fourPointsCond;
+        end
+    end
 end
 
 function allStats = reorientDeckAccelerometers(allStats)

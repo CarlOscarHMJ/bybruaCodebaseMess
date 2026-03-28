@@ -160,17 +160,20 @@ function stats = calculateSegmentStatistics(bridgeData, segmentWeather, t0, t1)
     end
 end
 
-function device = calculateTimeHistoryStatistics(time,signal,field)
-%CALCULATETIMEHISTORYSTATISTICS Calculates statistical properties for bridge monitoring fields.
+function device = calculateTimeHistoryStatistics(time, signal, field)
+% CALCULATETIMEHISTORYSTATISTICS Calculates statistical properties for bridge monitoring fields.
 arguments
     time 
     signal 
     field {mustBeTextScalar}
 end
 
-if strcmp(field,'Flag');return;end
+if strcmp(field, 'Flag'); return; end
 
-device.mean     = mean(signal,"all","omitmissing");
+if contains(field, 'WindSpeed') || strcmp(field, 'u') || strcmp(field, 'v')
+    device.stationarityValue = calculateWindStationarityValue(time, signal);
+    signal = detrend(double(signal));
+end
 
 if contains(field, 'Dir') || contains(field, 'Phi')
     device = calculateCircularStatistics(signal);
@@ -178,7 +181,7 @@ else
     device.mean = mean(signal, "all", "omitmissing");
 end
 
-if strcmp(field,'RainIntensity');return;end
+if strcmp(field, 'RainIntensity'); return; end
 
 if ~isfield(device, 'median')
     device.median = median(signal, "omitmissing");
@@ -190,9 +193,31 @@ end
 device.kurtosis = kurtosis(signal);
 device.skewness = skewness(signal);
 
-if strcmp(field,'Steel_Z') | strcmp(field,'Conc_Z')
+if strcmp(field, 'Steel_Z') || strcmp(field, 'Conc_Z')
     device.stationarityRatio = calculateStationarityRatio(time, signal);
 end
+end
+
+function stationarityValue = calculateWindStationarityValue(time, signal)
+% Calculates the maximum relative difference of 5-min moving averages against the global mean.
+if isempty(time) || isempty(signal)
+    stationarityValue = NaN;
+    return;
+end
+
+globalMean = mean(signal, 'omitmissing');
+if globalMean == 0
+    stationarityValue = NaN;
+    return;
+end
+
+samplingFrequency = 1 / seconds(median(diff(time)));
+windowSize = round(300 * samplingFrequency); 
+
+instantaneousMeans = movmean(signal, windowSize, 'omitmissing');
+relativeDifferences = abs(instantaneousMeans - globalMean) / globalMean;
+
+stationarityValue = max(relativeDifferences);
 end
 
 function device = calculateCircularStatistics(signal)
@@ -274,7 +299,7 @@ function segmentedWeather = sliceWeather(fullWeather, t0, t1)
 end
 
 function [foundPeaks, flags] = checkSpectralPeaks(data, fields, targets, tol, fs)
-    % Evaluates PSD peaks using the Burg method. 
+    % Evaluates PSD peaks using the Burg method and estimates damping for each peak.
     order = 50;
     nfft = 2^11;
 
@@ -282,14 +307,40 @@ function [foundPeaks, flags] = checkSpectralPeaks(data, fields, targets, tol, fs
         [psd, f] = pburg(double(data.(field)), order, nfft, fs);
         logPsd = log(psd);
         
-        % Find peaks within the 0.4-15Hz range
         relIdx = f >= 0.4 & f <= 10;
         [peaks, locs] = findpeaks(logPsd(relIdx), f(relIdx), 'MinPeakProminence', 4);
         
+        dampingRatios = zeros(size(locs));
+        for i = 1:numel(locs)
+            dampingRatios(i) = calculatePeakDamping(f, psd, locs(i));
+        end
+        
         foundPeaks.(field).locations = locs;
         foundPeaks.(field).logIntensity = peaks;
+        foundPeaks.(field).dampingRatios = dampingRatios;
         flags.(field) = arrayfun(@(t) any(abs(locs - t) < tol), targets);
     end
+end
+
+function dampingRatio = calculatePeakDamping(f, psd, peakFreq)
+    % Calculates the damping ratio using the half-power bandwidth method.
+    [~, peakIdx] = min(abs(f - peakFreq));
+    peakPower = psd(peakIdx);
+    halfPowerLevel = peakPower / 2;
+    
+    [f1, f2] = findBandwidthBoundaries(f, psd, peakIdx, halfPowerLevel);
+    dampingRatio = (f2 - f1) / (2 * peakFreq);
+end
+
+function [f1, f2] = findBandwidthBoundaries(f, psd, peakIdx, targetLevel)
+    % Finds the lower and upper frequency boundaries at the half-power level using interpolation.
+    lowerHalfPsd = psd(1:peakIdx);
+    lowerHalfFreq = f(1:peakIdx);
+    f1 = interp1(lowerHalfPsd, lowerHalfFreq, targetLevel);
+    
+    upperHalfPsd = psd(peakIdx:end);
+    upperHalfFreq = f(peakIdx:end);
+    f2 = interp1(upperHalfPsd, upperHalfFreq, targetLevel);
 end
 
 function [coherenceVal, flags] = checkCoherencePeaks(data, accelerometer, freqTargets, coherenceLimits, fs)

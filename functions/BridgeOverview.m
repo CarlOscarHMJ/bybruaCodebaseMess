@@ -496,6 +496,7 @@ classdef BridgeOverview
                 opts.windowSec (1,1) double = 60
                 opts.overlapPct (1,1) double = 50
                 opts.nfft (1,1) double = 256
+                opts.stftWindowSec (1,1) double = 20
                 opts.coherenceType (1,1) string {mustBeMember(opts.coherenceType, ["wavelet", "normal"])} = "normal"
                 opts.freqMethod (1,1) string {mustBeMember(opts.freqMethod, ["welch", "burg", "stft"])} = "welch"
                 opts.burgOrder (1,1) double = 50
@@ -536,6 +537,7 @@ classdef BridgeOverview
                 'windowSec', opts.windowSec, ...
                 'overlapPct', opts.overlapPct, ...
                 'nfft', opts.nfft, ...
+                'stftWindowSec', opts.stftWindowSec, ...
                 'hasCable', hasCableData, ...
                 'freqMethod', opts.freqMethod, ...
                 'burgOrder', opts.burgOrder, ...
@@ -655,7 +657,7 @@ classdef BridgeOverview
 
                 if ctx.hasCable
                     fs = 1 / median(diff(seconds(ctx.cableData.Time - ctx.cableData.Time(1))));
-                    winSamples = round(ctx.windowSec * fs);
+                    winSamples = round(ctx.stftWindowSec * fs);
                     overlapSamples = round(winSamples * (ctx.overlapPct / 100));
 
                     [~, fAxis, tAxis, pAxis] = spectrogram(double(ctx.cableData.(ctx.cableField)), hamming(winSamples), overlapSamples, ctx.nfft, fs);
@@ -667,7 +669,7 @@ classdef BridgeOverview
                     plotLabel = strrep(ctx.cableField, '_', ' ');
                 else
                     fs = 1 / median(diff(seconds(ctx.bridgeData.Time - ctx.bridgeData.Time(1))));
-                    winSamples = round(ctx.windowSec * fs);
+                    winSamples = round(ctx.stftWindowSec * fs);
                     overlapSamples = round(winSamples * (ctx.overlapPct / 100));
 
                     [~, fAxis, tAxis, pAxis] = spectrogram(double(ctx.bridgeData.(targetField)), hamming(winSamples), overlapSamples, ctx.nfft, fs);
@@ -680,6 +682,7 @@ classdef BridgeOverview
                 end
 
                 axis(ax, 'xy');
+                axis(ax, 'tight');
                 ylim(ax, [0 ctx.fMax]);
                 colormap(ax, jet);
 
@@ -930,18 +933,22 @@ classdef BridgeOverview
                     freqResp.(field).frequency = fB;
                     freqResp.(field).response = pB;
 
-                    try
-                        logPsd = log(pB);
-                        relIdx = fB >= 0.4 & fB <= ctx.fMax;
-                        [peaks, locs] = findpeaks(logPsd(relIdx), fB(relIdx), 'MinPeakProminence', 4);
-                        if ~isempty(locs)
-                            peakVals = arrayfun(@(x) pB(find(abs(fB - x) < 1e-6, 1)), locs);
-                            plot(ax, locs, peakVals, '^', 'Color', 'r', 'MarkerSize', 5, 'MarkerFaceColor', 'r', ...
-                                'HandleVisibility','off');
-                            freqResp.(field).peaks.locations = locs;
-                            freqResp.(field).peaks.intensity = peaks;
+                    if strcmpi(ctx.freqMethod, "burg")
+                        try
+                            logPsd = log(pB);
+                            relIdx = fB >= 0.4 & fB <= ctx.fMax;
+                            [peaks, locs] = findpeaks(logPsd(relIdx), fB(relIdx), 'MinPeakProminence', 4);
+                            if ~isempty(locs)
+                                peakVals = arrayfun(@(x) pB(find(abs(fB - x) < 1e-6, 1)), locs);
+                                plot(ax, locs, peakVals, '^', 'Color', 'r', 'MarkerSize', 5, 'MarkerFaceColor', 'r', ...
+                                    'HandleVisibility','off');
+                                freqResp.(field).peaks.locations = locs;
+                                freqResp.(field).peaks.intensity = peaks;
+                            end
+                        catch
+                            freqResp.(field).peaks = struct('locations', [], 'intensity', []);
                         end
-                    catch
+                    else
                         freqResp.(field).peaks = struct('locations', [], 'intensity', []);
                     end
                 end
@@ -1021,7 +1028,7 @@ classdef BridgeOverview
                 ylim([-1 1]);
                 grid on;
                 xlabel('Freq. (Hz)');
-                ylabel('Coherence');
+                ylabel('Co-coherence');
                 legend('Location', 'northeast', 'Interpreter', 'tex', 'FontSize', 8);
                 title('Co-coherence Analysis');
             end

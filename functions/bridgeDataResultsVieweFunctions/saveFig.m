@@ -1,4 +1,4 @@
-function successFlag = saveFig(fig,figureFolder,fileName,heightScale,widthScale,leg)
+function successFlag = saveFig(fig,figureFolder,fileName,heightScale,widthScale,leg,options)
 arguments
     fig 
     figureFolder 
@@ -6,18 +6,23 @@ arguments
     heightScale = 2
     widthScale = 1
     leg = []
+    options.scaleFigure (1,1) logical = true
 end
-%fontsize(fig, "scale",fontScale);
-scale = 2;
-fontsize(fig,9*scale,'points');
-lineWidth = 506.44*scale; %cm
-fig.Units = 'points';
-fig.Position(3:4) = [lineWidth/widthScale lineWidth/heightScale];
-fig.Renderer = 'painters';
 
-if ~isempty(leg)
-    leg.FontSize = 16;
+if options.scaleFigure
+    %fontsize(fig, "scale",fontScale);
+    scale = 2;
+    fontsize(fig,9*scale,'points');
+    lineWidth = 506.44*scale; %cm
+    fig.Units = 'points';
+    fig.Position(3:4) = [lineWidth/widthScale lineWidth/heightScale];
+    fig.Renderer = 'painters';
+    if ~isempty(leg)
+        leg.FontSize = 16;
+    end
 end
+
+figureFolder = char(figureFolder);fileName = char(fileName);
 
 try
     if ~isempty(figureFolder)

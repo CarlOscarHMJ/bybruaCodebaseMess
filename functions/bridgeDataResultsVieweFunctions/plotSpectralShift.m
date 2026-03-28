@@ -6,6 +6,8 @@ function plotSpectralShift(allStats, limits, options)
         options.specFlagField {mustBeTextScalar} = 'flag_PSDTotal'
         options.envFlagField {mustBeTextScalar} = 'flag_EnvironmentalMatch'
         options.targetSensors string = ["Conc_Z", "Steel_Z"]
+        options.directions string = ["X", "Y", "Z"]
+        options.plotAllDirections logical = false
         options.windDomain string = "local"
         options.figureFolder string = ""
         options.plotBackground logical = true
@@ -25,13 +27,46 @@ function plotSpectralShift(allStats, limits, options)
     allIntensities = [];
 
     for i = 1:length(options.targetSensors)
-        [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues] = extractSensorPeaks(allStats, options.targetSensors(i), options.specFlagField, options.envFlagField);
+        sensorBase = options.targetSensors(i);
         
-        extractedData{i} = struct('peakTimes', peakTimes, 'peakFreqs', peakFreqs, ...
-                                  'peakIntensities', peakIntensities, 'specFlags', specFlags, 'envFlags', envFlags, ...
-                                  'peakDurations', peakDurations, 'rainValues', rainValues);
+        if options.plotAllDirections
+            allDirPeakTimes = [];
+            allDirPeakFreqs = [];
+            allDirPeakIntensities = [];
+            allDirSpecFlags = [];
+            allDirEnvFlags = [];
+            allDirPeakDurations = [];
+            allDirRainValues = [];
+            allDirDirections = [];
+            
+            for d = 1:length(options.directions)
+                direction = char(options.directions(d));
+                sensorPrefix = char(sensorBase);
+                fullSensor = [sensorPrefix(1:end-1) direction];
+                [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues] = extractSensorPeaks(allStats, fullSensor, options.specFlagField, options.envFlagField);
+                
+                allDirPeakTimes = [allDirPeakTimes; peakTimes];
+                allDirPeakFreqs = [allDirPeakFreqs; peakFreqs];
+                allDirPeakIntensities = [allDirPeakIntensities; peakIntensities];
+                allDirSpecFlags = [allDirSpecFlags; specFlags];
+                allDirEnvFlags = [allDirEnvFlags; envFlags];
+                allDirPeakDurations = [allDirPeakDurations; peakDurations];
+                allDirRainValues = [allDirRainValues; rainValues];
+                allDirDirections = [allDirDirections; repmat(direction, length(peakTimes), 1)];
+            end
+            
+            extractedData{i} = struct('peakTimes', allDirPeakTimes, 'peakFreqs', allDirPeakFreqs, ...
+                                      'peakIntensities', allDirPeakIntensities, 'specFlags', allDirSpecFlags, 'envFlags', allDirEnvFlags, ...
+                                      'peakDurations', allDirPeakDurations, 'rainValues', allDirRainValues, 'directions', allDirDirections);
+        else
+            [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues] = extractSensorPeaks(allStats, sensorBase, options.specFlagField, options.envFlagField);
+            
+            extractedData{i} = struct('peakTimes', peakTimes, 'peakFreqs', peakFreqs, ...
+                                      'peakIntensities', peakIntensities, 'specFlags', specFlags, 'envFlags', envFlags, ...
+                                      'peakDurations', peakDurations, 'rainValues', rainValues);
+        end
         
-        allIntensities = [allIntensities; peakIntensities];
+        allIntensities = [allIntensities; extractedData{i}.peakIntensities];
     end
     
     [globalMin, globalMax] = getIntensityBounds(allIntensities);
@@ -48,8 +83,13 @@ function plotSpectralShift(allStats, limits, options)
         end
         
         axHandle = nexttile(layoutObj);
-        renderPeakScatter(sensorData.peakTimes, sensorData.peakFreqs, sensorData.peakIntensities, sensorData.specFlags, sensorData.envFlags, ...
-                          sensorData.peakDurations, sensorData.rainValues, currentSensor, limits, coverageTable, localMin, localMax, globalMin, globalMax, options.plotBackground);
+        if options.plotAllDirections
+            renderPeakScatter(sensorData.peakTimes, sensorData.peakFreqs, sensorData.peakIntensities, sensorData.specFlags, sensorData.envFlags, ...
+                              sensorData.peakDurations, sensorData.rainValues, currentSensor, limits, coverageTable, localMin, localMax, globalMin, globalMax, options.plotBackground, options.plotAllDirections, sensorData);
+        else
+            renderPeakScatter(sensorData.peakTimes, sensorData.peakFreqs, sensorData.peakIntensities, sensorData.specFlags, sensorData.envFlags, ...
+                              sensorData.peakDurations, sensorData.rainValues, currentSensor, limits, coverageTable, localMin, localMax, globalMin, globalMax, options.plotBackground, options.plotAllDirections, []);
+        end
     end
 
     linkaxes(findobj(figHandle, 'Type', 'axes'), 'xy');
@@ -62,6 +102,7 @@ end
 
 function [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues] = extractSensorPeaks(allStats, sensor, specFlagField, envFlagField)
     % extractSensorPeaks pulls peak information and environmental flags for a specific sensor.
+    sensor = char(sensor);
     numRows = height(allStats);
     peakFreqsCell = cell(numRows, 1);
     peakIntensitiesCell = cell(numRows, 1);
@@ -78,8 +119,8 @@ function [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurati
     peakIntensities = vertcat(peakIntensitiesCell{:});
 
     eventTimes = mean(allStats.duration, 2);
-    specFlagsArray = allStats.(specFlagField);
-    envFlagsArray = allStats.(envFlagField);
+    specFlagsArray = allStats.(char(specFlagField));
+    envFlagsArray = allStats.(char(envFlagField));
     rainArray = [allStats.RainIntensity.mean]';
 
     peakTimes = repelem(eventTimes, numPeaksArray);
@@ -89,7 +130,7 @@ function [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurati
     rainValues = repelem(rainArray, numPeaksArray, 1);
 end
 
-function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues, sensor, limits, coverageTable, localMin, localMax, globalMin, globalMax, plotBackground)
+function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues, sensor, limits, coverageTable, localMin, localMax, globalMin, globalMax, plotBackground, plotAllDirections, sensorData)
     % renderPeakScatter handles the visual rendering of the peak scatter plot for a single sensor.
     hold on;
     [minTime, maxTime] = addCoveragePatches(coverageTable, peakTimes);
@@ -101,19 +142,58 @@ function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, env
     isBlue = ~specFlags & envFlags & (rainValues > 0);
     isGray = ~specFlags & ~envFlags | (rainValues <= 0);
 
-    if plotBackground && any(isGray)
-        sGray = scatter(peakTimes(isGray), peakFreqs(isGray), markerSizes(isGray), [0.6 0.6 0.6], 'filled', 'MarkerFaceAlpha', 0.15, 'HitTest', 'off');
-        sGray.UserData = peakDurations(isGray, :);
-    end
+    if plotAllDirections && isfield(sensorData, 'directions')
+        directions = sensorData.directions;
+        directionMarkers = struct('X', '^', 'Y', 'square', 'Z', 'o');
+        directionLabels = struct('X', 'X (triangle)', 'Y', 'Y (square)', 'Z', 'Z (circle)');
+        
+        uniqueDirs = unique(directions);
+        legendEntries = [];
+        legendHandles = [];
+        
+        for d = 1:length(uniqueDirs)
+            dirMask = directions == uniqueDirs(d);
+            dirChar = char(uniqueDirs(d));
+            marker = directionMarkers.(dirChar);
+            
+            dirRed = isRed & dirMask;
+            dirBlue = isBlue & dirMask;
+            dirGray = isGray & dirMask;
+            
+            if plotBackground && any(dirGray)
+                [hGray, lh] = plotScatterGroup(peakTimes(dirGray), peakFreqs(dirGray), markerSizes(dirGray), [0.6 0.6 0.6], 0.15, dirChar, marker, peakDurations(dirGray, :));
+                if ~isempty(hGray), legendHandles = [legendHandles, hGray]; legendEntries = [legendEntries, lh]; end
+            end
+            
+            if any(dirBlue)
+                [hBlue, lh] = plotScatterGroup(peakTimes(dirBlue), peakFreqs(dirBlue), markerSizes(dirBlue), [0.2 0.4 0.6], 0.6, dirChar, marker, peakDurations(dirBlue, :));
+                if ~isempty(hBlue), legendHandles = [legendHandles, hBlue]; legendEntries = [legendEntries, lh]; end
+            end
+            
+            if any(dirRed)
+                [hRed, lh] = plotScatterGroup(peakTimes(dirRed), peakFreqs(dirRed), markerSizes(dirRed), [0.8 0.2 0.2], 0.6, dirChar, marker, peakDurations(dirRed, :));
+                if ~isempty(hRed), legendHandles = [legendHandles, hRed]; legendEntries = [legendEntries, lh]; end
+            end
+        end
+        
+        if ~isempty(legendHandles)
+            %legend(legendHandles, legendEntries, 'Location', 'northeast', 'Interpreter', 'latex');
+        end
+    else
+        if plotBackground && any(isGray)
+            sGray = scatter(peakTimes(isGray), peakFreqs(isGray), markerSizes(isGray), [0.6 0.6 0.6], 'filled', 'MarkerFaceAlpha', 0.15, 'HitTest', 'off');
+            sGray.UserData = peakDurations(isGray, :);
+        end
 
-    if any(isBlue)
-        sBlue = scatter(peakTimes(isBlue), peakFreqs(isBlue), markerSizes(isBlue), [0.2 0.4 0.6], 'filled', 'MarkerFaceAlpha', 0.6, 'HitTest', 'off');
-        sBlue.UserData = peakDurations(isBlue, :);
-    end
+        if any(isBlue)
+            sBlue = scatter(peakTimes(isBlue), peakFreqs(isBlue), markerSizes(isBlue), [0.2 0.4 0.6], 'filled', 'MarkerFaceAlpha', 0.6, 'HitTest', 'off');
+            sBlue.UserData = peakDurations(isBlue, :);
+        end
 
-    if any(isRed)
-        sRed = scatter(peakTimes(isRed), peakFreqs(isRed), markerSizes(isRed), [0.8 0.2 0.2], 'filled', 'MarkerFaceAlpha', 0.6, 'HitTest', 'off');
-        sRed.UserData = peakDurations(isRed, :);
+        if any(isRed)
+            sRed = scatter(peakTimes(isRed), peakFreqs(isRed), markerSizes(isRed), [0.8 0.2 0.2], 'filled', 'MarkerFaceAlpha', 0.6, 'HitTest', 'off');
+            sRed.UserData = peakDurations(isRed, :);
+        end
     end
 
     yline(limits.targetFreqs, '--k', 'LineWidth', 1.2, 'Alpha', 0.6, 'HitTest', 'off');
@@ -124,9 +204,20 @@ function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, env
     end
 
     grid on; box on;
-    title(sprintf('Sensor: \\texttt{%s}', strrep(sensor, '_', '\_')), 'Interpreter', 'latex');
+    if plotAllDirections
+        title(sprintf('Sensor: \\texttt{%s} (triangle=X, square=Y, circle=Z)', strrep(sensor(1:end-1), '_', '\_')), 'Interpreter', 'latex');
+    else
+        title(sprintf('Sensor: \\texttt{%s}', strrep(sensor, '_', '\_')), 'Interpreter', 'latex');
+    end
     ylabel('Frequency (Hz)', 'Interpreter', 'latex');
     set(gca, 'TickLabelInterpreter', 'latex');
+end
+
+function [h, label] = plotScatterGroup(times, freqs, sizes, color, alpha, dirChar, marker, durations)
+    if isempty(times), h = []; label = ''; return; end
+    h = scatter(times, freqs, sizes, color, marker, 'filled', 'MarkerFaceAlpha', alpha, 'HitTest', 'off');
+    h.UserData = durations;
+    label = sprintf('%s (%s)', dirChar, marker);
 end
 
 function onPlotClick(src, ~)
