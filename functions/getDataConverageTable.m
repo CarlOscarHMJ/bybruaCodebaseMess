@@ -4,7 +4,7 @@ arguments
     fignumber {mustBeInteger} = 999
 end
 
-pathToTable = '/home/carl/OneDrive/Documents/PhD_Stavanger/ByBrua/Analysis/Data/coverageData.mat';
+pathToTable = 'Data/coverageData.mat';
 coverageTable = load(pathToTable);
 coverageTable = coverageTable.coverageTable;
 
