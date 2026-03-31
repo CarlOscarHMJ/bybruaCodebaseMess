@@ -795,8 +795,8 @@ classdef BridgeOverview
                 yyaxis right
                 scatter(weather.PhiC1.Time, weather.PhiC1.Data, 15, 'filled', 'MarkerFaceAlpha', 0.3);
                 ylabel('Wind Direction $\Phi\, (^\circ)$', 'Interpreter', 'latex', 'FontSize', 12);
-                ylim([0 360]);
-                yticks(0:90:360);
+                %ylim([0 360]);
+                %yticks(0:90:360);
                 grid on;
                 title('Wind angle on C1');
                 axis tight;
@@ -1040,8 +1040,8 @@ classdef BridgeOverview
                 cableFreqsC5 = [3.00, 4.60, 5.40, 6.10, 7.60, 9.20];
                 deckFreqsC5 = [1.24, 2.93, 6.03, 6.11];
 
-                targetModes = [cableFreqsC1(3), cableFreqsC1(6)];
-                freqTolerance = 0.10;
+                targetModes = [cableFreqsC1(3), cableFreqsC1(4) cableFreqsC1(6)];
+                freqTolerance = 0.15;
 
                 plotFrequencyBands(targetModes, freqTolerance, [0.85 0.85 0.85], 0.5, 'Tolerance Interval');
 

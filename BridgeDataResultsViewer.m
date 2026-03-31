@@ -46,7 +46,7 @@ clc
 plotFlags = ["flag_PSD_Any3Points","flag_PSD_Any4Points","flag_PSDTotal","flag_PSDTotalAnd4Hz"];
 flagNames = ["PSD ($\ge$ 3 Peaks Any Dir.)","PSD ($\ge$ 4 Peaks Any Dir.)","PSD Total","PSD Total $\cup$ 4Hz"];
 %allStats = plotNidComparison(allStats, plotFlags, limits, 'local', figureFolder, flagNames, false, 10, 1);
-plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSD_Any4Points',plotBackground=false,plotAllDirections=false)
+plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSD_Any4Points',plotBackground=false,plotAllDirections=false,plotDamping=true)
 
 % plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
 % plotNidComparison(allStats,plotFlags,limits,'global',figureFolder);

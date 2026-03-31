@@ -1,5 +1,45 @@
 function plotSpectralShift(allStats, limits, options)
-    % plotSpectralShift generates an interactive spectral shift scatter plot analyzing PSD peaks.
+    % plotSpectralShift Generates an interactive spectral shift scatter plot analyzing PSD peaks.
+    %
+    % Description:
+    %   Creates a time-frequency scatter plot of PSD peak frequencies, with interactive
+    %   click-to-inspect functionality and optional damping ratio visualization.
+    %
+    % Arguments:
+    %   allStats  - Table containing PSD peak data with fields:
+    %               - psdPeaks: struct array with .locations, .logIntensity, .dampingRatios
+    %               - duration: [startTime, endTime] for each measurement
+    %               - RainIntensity.mean: average rain intensity
+    %               - Spec/Env flag fields as specified by options
+    %   limits    - Struct with:
+    %               - targetFreqs: target frequencies (Hz)
+    %               - freqTolerance: tolerance band around targets
+    %
+    % Options (name-value pairs):
+    %   specFlagField      - Field name for spectral match flag (default: 'flag_PSDTotal')
+    %   envFlagField       - Field name for environmental match flag (default: 'flag_EnvironmentalMatch')
+    %   targetSensors      - Sensor names to plot (default: ["Conc_Z", "Steel_Z"])
+    %   directions         - Direction suffixes for plotAllDirections mode (default: ["X", "Y", "Z"])
+    %   plotAllDirections  - Plot all X/Y/Z directions separately (default: false)
+    %   windDomain         - Wind domain: "local" or "global" (default: "local")
+    %   figureFolder       - Folder path to save figure (default: "")
+    %   plotBackground     - Show gray background points (default: true)
+    %   independentSensorScaling - Use independent intensity scaling per sensor (default: true)
+    %   plotDamping        - Show damping ratio as face color via colormap (default: true)
+    %
+    % Output:
+    %   Interactive figure with:
+    %   - Marker colors: Semantic meaning (red=spectral match, blue=env match+rain, gray=background)
+    %   - Marker size: Relative peak intensity
+    %   - Face color: Damping ratio (if plotDamping=true, via gray colormap)
+    %   - Left-click: Inspect individual peaks
+    %   - Right-drag: Select time range for inspection
+    %
+    % Example:
+    %   plotSpectralShift(allStats, limits, 'targetSensors', ["Conc_Z", "Steel_Z"], 'plotDamping', true)
+    %
+    % See also: inspectDayResponse, getDataConverageTable
+    
     arguments
         allStats table
         limits struct
@@ -12,6 +52,7 @@ function plotSpectralShift(allStats, limits, options)
         options.figureFolder string = ""
         options.plotBackground logical = true
         options.independentSensorScaling logical = true
+        options.plotDamping logical = true
     end
 
     figHandle = createFigure(8, 'SpectralShift');
@@ -100,10 +141,17 @@ function plotSpectralShift(allStats, limits, options)
         renderPeakScatter(sensorData.peakTimes, sensorData.peakFreqs, sensorData.peakIntensities, sensorData.specFlags, sensorData.envFlags, ...
                           sensorData.peakDurations, sensorData.rainValues, sensorData.peakDamping, currentSensor, limits, coverageTable, ...
                           localMin, localMax, globalMin, globalMax, options.plotBackground, options.plotAllDirections, sensorData, ...
-                          globalDampingMin, globalDampingMax, i == 1);
+                          globalDampingMin, globalDampingMax, options.plotDamping);
     end
 
     linkaxes(findobj(figHandle, 'Type', 'axes'), 'xy');
+
+    if options.plotDamping
+        colorbarHandle = colorbar();
+        colorbarHandle.Layout.Tile = 'east';
+        colorbarHandle.Label.String = 'Damping Ratio';
+        colorbarHandle.Label.Interpreter = 'latex';
+    end
 
     if strlength(options.figureFolder) > 0
         saveName = strrep(sprintf('SpectralShift_%s_%s', options.specFlagField, options.envFlagField), '_', '');
@@ -148,7 +196,7 @@ function [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurati
     rainValues = repelem(rainArray, numPeaksArray, 1);
 end
 
-function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues, peakDamping, sensor, limits, coverageTable, localMin, localMax, globalMin, globalMax, plotBackground, plotAllDirections, sensorData, dampingMin, dampingMax, addColorbar)
+function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues, peakDamping, sensor, limits, coverageTable, localMin, localMax, globalMin, globalMax, plotBackground, plotAllDirections, sensorData, dampingMin, dampingMax, plotDamping)
     % renderPeakScatter handles the visual rendering of the peak scatter plot for a single sensor.
     hold on;
     [minTime, maxTime] = addCoveragePatches(coverageTable, peakTimes);
@@ -160,13 +208,10 @@ function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, env
     isBlue = ~specFlags & envFlags & (rainValues > 0);
     isGray = ~specFlags & ~envFlags | (rainValues <= 0);
 
-    colormap(gca, flipud(gray(256)));
-    caxis([dampingMin dampingMax]);
-    
-    if addColorbar
-        colorbarHandle = colorbar;
-        colorbarHandle.Label.String = 'Damping Ratio';
-        colorbarHandle.Label.Interpreter = 'latex';
+    if plotDamping
+        %colormap(gca, flipud(gray(256)));
+        colormap(gca,myColorMap());
+        caxis([0 1]);
     end
 
     if plotAllDirections && isfield(sensorData, 'directions')
@@ -187,17 +232,17 @@ function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, env
             dirGray = isGray & dirMask;
             
             if plotBackground && any(dirGray)
-                [hGray, lh] = plotScatterDamping(peakTimes(dirGray), peakFreqs(dirGray), markerSizes(dirGray), [0.6 0.6 0.6], 0.15, peakDamping(dirGray), peakDurations(dirGray, :), marker);
+                [hGray, lh] = plotScatter(peakTimes(dirGray), peakFreqs(dirGray), markerSizes(dirGray), [0.6 0.6 0.6], 0.15, peakDamping(dirGray), peakDurations(dirGray, :), marker, plotDamping);
                 if ~isempty(hGray), legendHandles = [legendHandles, hGray]; legendEntries = [legendEntries, lh]; end
             end
             
             if any(dirBlue)
-                [hBlue, lh] = plotScatterDamping(peakTimes(dirBlue), peakFreqs(dirBlue), markerSizes(dirBlue), [0.2 0.4 0.6], 0.6, peakDamping(dirBlue), peakDurations(dirBlue, :), marker);
+                [hBlue, lh] = plotScatter(peakTimes(dirBlue), peakFreqs(dirBlue), markerSizes(dirBlue), [0.2 0.4 0.6], 0.6, peakDamping(dirBlue), peakDurations(dirBlue, :), marker, plotDamping);
                 if ~isempty(hBlue), legendHandles = [legendHandles, hBlue]; legendEntries = [legendEntries, lh]; end
             end
             
             if any(dirRed)
-                [hRed, lh] = plotScatterDamping(peakTimes(dirRed), peakFreqs(dirRed), markerSizes(dirRed), [0.8 0.2 0.2], 0.6, peakDamping(dirRed), peakDurations(dirRed, :), marker);
+                [hRed, lh] = plotScatter(peakTimes(dirRed), peakFreqs(dirRed), markerSizes(dirRed), [0.8 0.2 0.2], 0.6, peakDamping(dirRed), peakDurations(dirRed, :), marker, plotDamping);
                 if ~isempty(hRed), legendHandles = [legendHandles, hRed]; legendEntries = [legendEntries, lh]; end
             end
         end
@@ -207,15 +252,15 @@ function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, env
         end
     else
         if plotBackground && any(isGray)
-            plotScatterDamping(peakTimes(isGray), peakFreqs(isGray), markerSizes(isGray), [0.6 0.6 0.6], 0.15, peakDamping(isGray), peakDurations(isGray, :), 'o');
+            plotScatter(peakTimes(isGray), peakFreqs(isGray), markerSizes(isGray), [0.6 0.6 0.6], 0.15, peakDamping(isGray), peakDurations(isGray, :), 'o', plotDamping);
         end
 
         if any(isBlue)
-            plotScatterDamping(peakTimes(isBlue), peakFreqs(isBlue), markerSizes(isBlue), [0.2 0.4 0.6], 0.6, peakDamping(isBlue), peakDurations(isBlue, :), 'o');
+            plotScatter(peakTimes(isBlue), peakFreqs(isBlue), markerSizes(isBlue), [0.2 0.4 0.6], 0.6, peakDamping(isBlue), peakDurations(isBlue, :), 'o', plotDamping);
         end
 
         if any(isRed)
-            plotScatterDamping(peakTimes(isRed), peakFreqs(isRed), markerSizes(isRed), [0.8 0.2 0.2], 0.6, peakDamping(isRed), peakDurations(isRed, :), 'o');
+            plotScatter(peakTimes(isRed), peakFreqs(isRed), markerSizes(isRed), [0.8 0.2 0.2], 0.6, peakDamping(isRed), peakDurations(isRed, :), 'o', plotDamping);
         end
     end
 
@@ -236,22 +281,28 @@ function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, env
     set(gca, 'TickLabelInterpreter', 'latex');
 end
 
-function [h, label] = plotScatterGroup(times, freqs, sizes, color, alpha, dirChar, marker, durations, damping)
+function [h, label] = plotScatterGroup(times, freqs, sizes, color, alpha, dirChar, marker, durations, damping, plotDamping)
     if isempty(times), h = []; label = ''; return; end
-    h = plotScatterDamping(times, freqs, sizes, color, alpha, damping, durations, marker);
+    h = plotScatter(times, freqs, sizes, color, alpha, damping, durations, marker, plotDamping);
     label = sprintf('%s (%s)', dirChar, marker);
 end
 
-function h = plotScatterDamping(times, freqs, sizes, edgeColor, edgeAlpha, damping, durations, marker)
+function h = plotScatter(times, freqs, sizes, edgeColor, edgeAlpha, damping, durations, marker, plotDamping)
     if isempty(times)
         h = [];
         return;
     end
     
-    h = scatter(times, freqs, sizes, 'Marker', marker, ...
-        'MarkerFaceColor', 'flat', 'CData', damping, ...
-        'MarkerFaceAlpha', edgeAlpha, ...
-        'MarkerEdgeColor', edgeColor, 'LineWidth', 1.0, 'HitTest', 'off');
+    if plotDamping
+        h = scatter(times, freqs, sizes, 'Marker', marker, ...
+            'MarkerFaceColor', 'flat', 'CData', damping, ...
+            'MarkerFaceAlpha', edgeAlpha, ...
+            'MarkerEdgeColor', edgeColor, 'LineWidth', 1.0, 'HitTest', 'off');
+    else
+        h = scatter(times, freqs, sizes, 'Marker', marker, ...
+            'MarkerFaceColor', edgeColor, 'MarkerFaceAlpha', edgeAlpha, ...
+            'MarkerEdgeColor', edgeColor, 'LineWidth', 0.5, 'HitTest', 'off');
+    end
     h.UserData = struct('durations', durations, 'damping', damping);
 end
 
@@ -370,7 +421,7 @@ function onWindowButtonDown(~, ~)
             end
         end
         
-        if ~isempty(bestScatter) && minDist < 0.1
+        if ~isempty(bestScatter) && minDist < 0.05
             userData = bestScatter.UserData;
             if isstruct(userData)
                 segmentDurations = userData.durations;
