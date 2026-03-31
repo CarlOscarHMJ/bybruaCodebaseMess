@@ -24,7 +24,7 @@ rng(112)
 plotFlags = ["flag_StructuralResponseMatch","flag_PSDTotal","flag_CohTotal","flag_EnvironmentalMatch","flag_PSDAllDirections","flag_PSDSelectedCs"];
 flagNames = ["PSD $\cap$ Coherence", "PSD", "Coherence", "Daniotti\,(2021)","PSD All Directions","PSD Selected Directions"];
 % ISDAC 2026 Paper figures
-allStats = plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
+% allStats = plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
 % plotNidComparisonPeakIntensity(allStats, plotFlags(2), limits, 'global', figureFolder,flagNames(2));
 % plotWindRoses(allStats,figureFolder)
 % plotRiwvWeatherScatter3D(allStats, limits, figureFolder);
@@ -35,7 +35,7 @@ allStats = plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder
 % Additional analysis for eastdac
 % plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSDTotal',plotBackground=false,plotAllDirections=true)
 % plotSpectralShift(allStats,'flag_EnvironmentalMatch', ["Conc_Z", "Steel_Z"], limits,'local',figureFolder)
-% clc
+clc
 % plotSpectralShiftHistogram(allStats, targetSensors=["Conc_Z", "Steel_Z"], ...
 %                            envFlagField='flag_PSDTotal_inGmm', ...
 %                            specFlagField='flag_PSDTotalAnd4Hz', ...
@@ -46,7 +46,7 @@ allStats = plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder
 plotFlags = ["flag_PSD_Any3Points","flag_PSD_Any4Points","flag_PSDTotal","flag_PSDTotalAnd4Hz"];
 flagNames = ["PSD ($\ge$ 3 Peaks Any Dir.)","PSD ($\ge$ 4 Peaks Any Dir.)","PSD Total","PSD Total $\cup$ 4Hz"];
 %allStats = plotNidComparison(allStats, plotFlags, limits, 'local', figureFolder, flagNames, false, 10, 1);
-plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSD_Any4Points',plotBackground=true,plotAllDirections=false)
+plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSD_Any4Points',plotBackground=false,plotAllDirections=false)
 
 % plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
 % plotNidComparison(allStats,plotFlags,limits,'global',figureFolder);

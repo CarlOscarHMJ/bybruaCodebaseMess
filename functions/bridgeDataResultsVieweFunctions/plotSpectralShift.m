@@ -25,6 +25,7 @@ function plotSpectralShift(allStats, limits, options)
 
     extractedData = cell(length(options.targetSensors), 1);
     allIntensities = [];
+    allDamping = [];
 
     for i = 1:length(options.targetSensors)
         sensorBase = options.targetSensors(i);
@@ -38,12 +39,13 @@ function plotSpectralShift(allStats, limits, options)
             allDirPeakDurations = [];
             allDirRainValues = [];
             allDirDirections = [];
+            allDirDamping = [];
             
             for d = 1:length(options.directions)
                 direction = char(options.directions(d));
                 sensorPrefix = char(sensorBase);
                 fullSensor = [sensorPrefix(1:end-1) direction];
-                [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues] = extractSensorPeaks(allStats, fullSensor, options.specFlagField, options.envFlagField);
+                [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues, peakDamping] = extractSensorPeaks(allStats, fullSensor, options.specFlagField, options.envFlagField);
                 
                 allDirPeakTimes = [allDirPeakTimes; peakTimes];
                 allDirPeakFreqs = [allDirPeakFreqs; peakFreqs];
@@ -53,23 +55,35 @@ function plotSpectralShift(allStats, limits, options)
                 allDirPeakDurations = [allDirPeakDurations; peakDurations];
                 allDirRainValues = [allDirRainValues; rainValues];
                 allDirDirections = [allDirDirections; repmat(direction, length(peakTimes), 1)];
+                allDirDamping = [allDirDamping; peakDamping];
             end
             
             extractedData{i} = struct('peakTimes', allDirPeakTimes, 'peakFreqs', allDirPeakFreqs, ...
                                       'peakIntensities', allDirPeakIntensities, 'specFlags', allDirSpecFlags, 'envFlags', allDirEnvFlags, ...
-                                      'peakDurations', allDirPeakDurations, 'rainValues', allDirRainValues, 'directions', allDirDirections);
+                                      'peakDurations', allDirPeakDurations, 'rainValues', allDirRainValues, 'directions', allDirDirections, ...
+                                      'peakDamping', allDirDamping);
         else
-            [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues] = extractSensorPeaks(allStats, sensorBase, options.specFlagField, options.envFlagField);
+            [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues, peakDamping] = extractSensorPeaks(allStats, sensorBase, options.specFlagField, options.envFlagField);
             
             extractedData{i} = struct('peakTimes', peakTimes, 'peakFreqs', peakFreqs, ...
                                       'peakIntensities', peakIntensities, 'specFlags', specFlags, 'envFlags', envFlags, ...
-                                      'peakDurations', peakDurations, 'rainValues', rainValues);
+                                      'peakDurations', peakDurations, 'rainValues', rainValues, 'peakDamping', peakDamping);
         end
         
         allIntensities = [allIntensities; extractedData{i}.peakIntensities];
+        allDamping = [allDamping; extractedData{i}.peakDamping];
     end
     
     [globalMin, globalMax] = getIntensityBounds(allIntensities);
+    
+    validDamping = allDamping(~isnan(allDamping));
+    if ~isempty(validDamping)
+        globalDampingMin = min(validDamping);
+        globalDampingMax = max(validDamping);
+    else
+        globalDampingMin = 0;
+        globalDampingMax = 1;
+    end
 
     for i = 1:length(options.targetSensors)
         currentSensor = options.targetSensors(i);
@@ -83,13 +97,10 @@ function plotSpectralShift(allStats, limits, options)
         end
         
         axHandle = nexttile(layoutObj);
-        if options.plotAllDirections
-            renderPeakScatter(sensorData.peakTimes, sensorData.peakFreqs, sensorData.peakIntensities, sensorData.specFlags, sensorData.envFlags, ...
-                              sensorData.peakDurations, sensorData.rainValues, currentSensor, limits, coverageTable, localMin, localMax, globalMin, globalMax, options.plotBackground, options.plotAllDirections, sensorData);
-        else
-            renderPeakScatter(sensorData.peakTimes, sensorData.peakFreqs, sensorData.peakIntensities, sensorData.specFlags, sensorData.envFlags, ...
-                              sensorData.peakDurations, sensorData.rainValues, currentSensor, limits, coverageTable, localMin, localMax, globalMin, globalMax, options.plotBackground, options.plotAllDirections, []);
-        end
+        renderPeakScatter(sensorData.peakTimes, sensorData.peakFreqs, sensorData.peakIntensities, sensorData.specFlags, sensorData.envFlags, ...
+                          sensorData.peakDurations, sensorData.rainValues, sensorData.peakDamping, currentSensor, limits, coverageTable, ...
+                          localMin, localMax, globalMin, globalMax, options.plotBackground, options.plotAllDirections, sensorData, ...
+                          globalDampingMin, globalDampingMax, i == 1);
     end
 
     linkaxes(findobj(figHandle, 'Type', 'axes'), 'xy');
@@ -100,23 +111,30 @@ function plotSpectralShift(allStats, limits, options)
     end
 end
 
-function [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues] = extractSensorPeaks(allStats, sensor, specFlagField, envFlagField)
+function [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues, peakDamping] = extractSensorPeaks(allStats, sensor, specFlagField, envFlagField)
     % extractSensorPeaks pulls peak information and environmental flags for a specific sensor.
     sensor = char(sensor);
     numRows = height(allStats);
     peakFreqsCell = cell(numRows, 1);
     peakIntensitiesCell = cell(numRows, 1);
+    peakDampingCell = cell(numRows, 1);
     numPeaksArray = zeros(numRows, 1);
 
     for i = 1:numRows
         locations = allStats.psdPeaks(i).(sensor).locations(:);
         peakFreqsCell{i} = locations;
         peakIntensitiesCell{i} = allStats.psdPeaks(i).(sensor).logIntensity(:);
+        if isfield(allStats.psdPeaks(i).(sensor), 'dampingRatios')
+            peakDampingCell{i} = allStats.psdPeaks(i).(sensor).dampingRatios(:);
+        else
+            peakDampingCell{i} = NaN(size(locations));
+        end
         numPeaksArray(i) = length(locations);
     end
 
     peakFreqs = vertcat(peakFreqsCell{:});
     peakIntensities = vertcat(peakIntensitiesCell{:});
+    peakDamping = vertcat(peakDampingCell{:});
 
     eventTimes = mean(allStats.duration, 2);
     specFlagsArray = allStats.(char(specFlagField));
@@ -130,7 +148,7 @@ function [peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurati
     rainValues = repelem(rainArray, numPeaksArray, 1);
 end
 
-function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues, sensor, limits, coverageTable, localMin, localMax, globalMin, globalMax, plotBackground, plotAllDirections, sensorData)
+function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, envFlags, peakDurations, rainValues, peakDamping, sensor, limits, coverageTable, localMin, localMax, globalMin, globalMax, plotBackground, plotAllDirections, sensorData, dampingMin, dampingMax, addColorbar)
     % renderPeakScatter handles the visual rendering of the peak scatter plot for a single sensor.
     hold on;
     [minTime, maxTime] = addCoveragePatches(coverageTable, peakTimes);
@@ -142,10 +160,18 @@ function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, env
     isBlue = ~specFlags & envFlags & (rainValues > 0);
     isGray = ~specFlags & ~envFlags | (rainValues <= 0);
 
+    colormap(gca, flipud(gray(256)));
+    caxis([dampingMin dampingMax]);
+    
+    if addColorbar
+        colorbarHandle = colorbar;
+        colorbarHandle.Label.String = 'Damping Ratio';
+        colorbarHandle.Label.Interpreter = 'latex';
+    end
+
     if plotAllDirections && isfield(sensorData, 'directions')
         directions = sensorData.directions;
         directionMarkers = struct('X', '^', 'Y', 'square', 'Z', 'o');
-        directionLabels = struct('X', 'X (triangle)', 'Y', 'Y (square)', 'Z', 'Z (circle)');
         
         uniqueDirs = unique(directions);
         legendEntries = [];
@@ -161,17 +187,17 @@ function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, env
             dirGray = isGray & dirMask;
             
             if plotBackground && any(dirGray)
-                [hGray, lh] = plotScatterGroup(peakTimes(dirGray), peakFreqs(dirGray), markerSizes(dirGray), [0.6 0.6 0.6], 0.15, dirChar, marker, peakDurations(dirGray, :));
+                [hGray, lh] = plotScatterDamping(peakTimes(dirGray), peakFreqs(dirGray), markerSizes(dirGray), [0.6 0.6 0.6], 0.15, peakDamping(dirGray), peakDurations(dirGray, :), marker);
                 if ~isempty(hGray), legendHandles = [legendHandles, hGray]; legendEntries = [legendEntries, lh]; end
             end
             
             if any(dirBlue)
-                [hBlue, lh] = plotScatterGroup(peakTimes(dirBlue), peakFreqs(dirBlue), markerSizes(dirBlue), [0.2 0.4 0.6], 0.6, dirChar, marker, peakDurations(dirBlue, :));
+                [hBlue, lh] = plotScatterDamping(peakTimes(dirBlue), peakFreqs(dirBlue), markerSizes(dirBlue), [0.2 0.4 0.6], 0.6, peakDamping(dirBlue), peakDurations(dirBlue, :), marker);
                 if ~isempty(hBlue), legendHandles = [legendHandles, hBlue]; legendEntries = [legendEntries, lh]; end
             end
             
             if any(dirRed)
-                [hRed, lh] = plotScatterGroup(peakTimes(dirRed), peakFreqs(dirRed), markerSizes(dirRed), [0.8 0.2 0.2], 0.6, dirChar, marker, peakDurations(dirRed, :));
+                [hRed, lh] = plotScatterDamping(peakTimes(dirRed), peakFreqs(dirRed), markerSizes(dirRed), [0.8 0.2 0.2], 0.6, peakDamping(dirRed), peakDurations(dirRed, :), marker);
                 if ~isempty(hRed), legendHandles = [legendHandles, hRed]; legendEntries = [legendEntries, lh]; end
             end
         end
@@ -181,18 +207,15 @@ function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, env
         end
     else
         if plotBackground && any(isGray)
-            sGray = scatter(peakTimes(isGray), peakFreqs(isGray), markerSizes(isGray), [0.6 0.6 0.6], 'filled', 'MarkerFaceAlpha', 0.15, 'HitTest', 'off');
-            sGray.UserData = peakDurations(isGray, :);
+            plotScatterDamping(peakTimes(isGray), peakFreqs(isGray), markerSizes(isGray), [0.6 0.6 0.6], 0.15, peakDamping(isGray), peakDurations(isGray, :), 'o');
         end
 
         if any(isBlue)
-            sBlue = scatter(peakTimes(isBlue), peakFreqs(isBlue), markerSizes(isBlue), [0.2 0.4 0.6], 'filled', 'MarkerFaceAlpha', 0.6, 'HitTest', 'off');
-            sBlue.UserData = peakDurations(isBlue, :);
+            plotScatterDamping(peakTimes(isBlue), peakFreqs(isBlue), markerSizes(isBlue), [0.2 0.4 0.6], 0.6, peakDamping(isBlue), peakDurations(isBlue, :), 'o');
         end
 
         if any(isRed)
-            sRed = scatter(peakTimes(isRed), peakFreqs(isRed), markerSizes(isRed), [0.8 0.2 0.2], 'filled', 'MarkerFaceAlpha', 0.6, 'HitTest', 'off');
-            sRed.UserData = peakDurations(isRed, :);
+            plotScatterDamping(peakTimes(isRed), peakFreqs(isRed), markerSizes(isRed), [0.8 0.2 0.2], 0.6, peakDamping(isRed), peakDurations(isRed, :), 'o');
         end
     end
 
@@ -213,11 +236,23 @@ function renderPeakScatter(peakTimes, peakFreqs, peakIntensities, specFlags, env
     set(gca, 'TickLabelInterpreter', 'latex');
 end
 
-function [h, label] = plotScatterGroup(times, freqs, sizes, color, alpha, dirChar, marker, durations)
+function [h, label] = plotScatterGroup(times, freqs, sizes, color, alpha, dirChar, marker, durations, damping)
     if isempty(times), h = []; label = ''; return; end
-    h = scatter(times, freqs, sizes, color, marker, 'filled', 'MarkerFaceAlpha', alpha, 'HitTest', 'off');
-    h.UserData = durations;
+    h = plotScatterDamping(times, freqs, sizes, color, alpha, damping, durations, marker);
     label = sprintf('%s (%s)', dirChar, marker);
+end
+
+function h = plotScatterDamping(times, freqs, sizes, edgeColor, edgeAlpha, damping, durations, marker)
+    if isempty(times)
+        h = [];
+        return;
+    end
+    
+    h = scatter(times, freqs, sizes, 'Marker', marker, ...
+        'MarkerFaceColor', 'flat', 'CData', damping, ...
+        'MarkerFaceAlpha', edgeAlpha, ...
+        'MarkerEdgeColor', edgeColor, 'LineWidth', 1.0, 'HitTest', 'off');
+    h.UserData = struct('durations', durations, 'damping', damping);
 end
 
 function onPlotClick(src, ~)
@@ -260,11 +295,22 @@ function onPlotClick(src, ~)
     end
     
     if ~isempty(bestScatter) && minDist < 0.1
-        segmentDurations = bestScatter.UserData;
+        userData = bestScatter.UserData;
+        if isstruct(userData)
+            segmentDurations = userData.durations;
+            damping = userData.damping(bestIdx);
+        else
+            segmentDurations = userData;
+            damping = NaN;
+        end
         startTime = segmentDurations(bestIdx, 1);
         endTime = segmentDurations(bestIdx, 2);
         
-        fprintf('Selected event at %s (Freq: %.2f Hz)\n', char(bestScatter.XData(bestIdx)), bestScatter.YData(bestIdx));
+        if isnan(damping)
+            fprintf('Selected event at %s (Freq: %.2f Hz)\n', char(bestScatter.XData(bestIdx)), bestScatter.YData(bestIdx));
+        else
+            fprintf('Selected event at %s (Freq: %.2f Hz, Damping: %.3f)\n', char(bestScatter.XData(bestIdx)), bestScatter.YData(bestIdx), damping);
+        end
         inspectDayResponse(startTime, endTime,"freqMethod","burg");
     end
 end
@@ -325,11 +371,22 @@ function onWindowButtonDown(~, ~)
         end
         
         if ~isempty(bestScatter) && minDist < 0.1
-            segmentDurations = bestScatter.UserData;
+            userData = bestScatter.UserData;
+            if isstruct(userData)
+                segmentDurations = userData.durations;
+                damping = userData.damping(bestIdx);
+            else
+                segmentDurations = userData;
+                damping = NaN;
+            end
             startTime = segmentDurations(bestIdx, 1);
             endTime = segmentDurations(bestIdx, 2);
             
-            fprintf('Selected event at %s (Freq: %.2f Hz)\n', char(bestScatter.XData(bestIdx)), bestScatter.YData(bestIdx));
+            if isnan(damping)
+                fprintf('Selected event at %s (Freq: %.2f Hz)\n', char(bestScatter.XData(bestIdx)), bestScatter.YData(bestIdx));
+            else
+                fprintf('Selected event at %s (Freq: %.2f Hz, Damping: %.3f)\n', char(bestScatter.XData(bestIdx)), bestScatter.YData(bestIdx), damping);
+            end
             inspectDayResponse(startTime, endTime, "freqMethod", "burg");
         end
     end

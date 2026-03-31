@@ -1,6 +1,13 @@
-function allDailyResults = BridgeDataDailyProcessor()
-% Processes bridge monitoring data for RWIV signatures using parallel processing and optimized memory handling.
-clear all; clc;
+function allDailyResults = BridgeDataDailyProcessor(executionTime)
+% Processes bridge monitoring data for RWIV signatures using parallel processing and optimized memory handling
+% Optionally waits until executionTime before starting the data extraction
+
+arguments
+    executionTime {mustBeA(executionTime, 'datetime')} = datetime('now')
+end
+
+waitForExecutionTime(executionTime);
+
 addpath('functions');
 
 dataRoot = 'Data';
@@ -250,17 +257,40 @@ stationarityValue = max(abs(instantaneousMeans - globalMean) / globalMean);
 end
 
 function dampingRatio = calculatePeakDamping(f, psd, peakFreq)
-% Estimates damping using the half-power bandwidth method. [cite: 3685, 3686]
-[~, peakIdx] = min(abs(f - peakFreq));
-halfPowerLevel = psd(peakIdx) / 2;
+% Estimates damping using the half-power bandwidth method within local minima bounds
 
-lowerSegment = psd(1:peakIdx);
-f1 = interp1(lowerSegment, f(1:peakIdx), halfPowerLevel);
+    [~, peakIndex] = min(abs(f - peakFreq));
+    halfPowerLevel = psd(peakIndex) / 2;
 
-upperSegment = psd(peakIdx:end);
-f2 = interp1(upperSegment, f(peakIdx:end), halfPowerLevel);
+    valleyIndices = find(islocalmin(psd));
 
-dampingRatio = (f2 - f1) / (2 * peakFreq);
+    leftBoundaryIndex = max([1; valleyIndices(valleyIndices < peakIndex)]);
+    rightBoundaryIndex = min([length(psd); valleyIndices(valleyIndices > peakIndex)]);
+
+    lowerSlopePower = psd(leftBoundaryIndex:peakIndex);
+    lowerSlopeFrequencies = f(leftBoundaryIndex:peakIndex);
+    
+    upperSlopePower = psd(peakIndex:rightBoundaryIndex);
+    upperSlopeFrequencies = f(peakIndex:rightBoundaryIndex);
+
+    if min(lowerSlopePower) > halfPowerLevel || min(upperSlopePower) > halfPowerLevel
+        dampingRatio = NaN;
+        return;
+    end
+
+    [uniqueLowerPower, uniqueLowerIndices] = unique(lowerSlopePower);
+    uniqueLowerFrequencies = lowerSlopeFrequencies(uniqueLowerIndices);
+    
+    [uniqueUpperPower, uniqueUpperIndices] = unique(upperSlopePower);
+    uniqueUpperFrequencies = upperSlopeFrequencies(uniqueUpperIndices);
+
+    lowerHalfPowerFrequency = interp1(uniqueLowerPower, uniqueLowerFrequencies, halfPowerLevel);
+    upperHalfPowerFrequency = interp1(uniqueUpperPower, uniqueUpperFrequencies, halfPowerLevel);
+
+    dampingRatio = (upperHalfPowerFrequency - lowerHalfPowerFrequency) / (2 * peakFreq);
+    if dampingRatio > 1
+        keyboard
+    end
 end
 
 function stationarityRatio = calculateStationarityRatio(time, signal)
@@ -318,4 +348,16 @@ for i = 1:numel(fields)
         segmentedWeather.(fieldName) = current;
     end
 end
+end
+
+function waitForExecutionTime(targetTime)
+% Halts execution until the specified target datetime is reached
+
+    timeToWait = targetTime - datetime('now');
+    delayInSeconds = seconds(timeToWait);
+    
+    if delayInSeconds > 0
+        fprintf('Execution paused. Processing will begin at: %s\n', datestr(targetTime, 'yyyy-mm-dd HH:MM:SS'));
+        pause(delayInSeconds);
+    end
 end
