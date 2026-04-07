@@ -451,30 +451,35 @@ classdef BridgeProject
 
         function weatherData = processRainIntensity(~, weatherData)
             % processRainIntensity calculates 10-minute average rain intensity
+
             precipTime = weatherData.Precipitation.Time;
             precipData = weatherData.Precipitation.Data;
 
             binDuration = minutes(10);
-            binStart = dateshift(precipTime(1), 'start', 'minute');
-            binEnd = dateshift(precipTime(end), 'end', 'minute');
-            binEdges = (binStart : binDuration : binEnd)';
 
-            [~, ~, groups] = histcounts(precipTime, binEdges);
+            % If total duration is smaller than one bin, skip histcounts
+            if precipTime(end) - precipTime(1) < binDuration
+                newTime = precipTime(1) + binDuration/2;
+                newIntensity = NaN;
+            else
+                binStart = dateshift(precipTime(1), 'start', 'minute');
+                binEnd = dateshift(precipTime(end), 'end', 'minute');
+                binEdges = (binStart : binDuration : binEnd)';
 
-            newTime = binEdges(1:end-1) + binDuration/2;
-            newIntensity = zeros(numel(newTime), 1);
+                [~, ~, groups] = histcounts(precipTime, binEdges);
 
-            for i = 1:numel(newTime)
-                groupMask = groups == i;
-                if any(groupMask)
-                    % Aligning with Jasna's note: 10 * mean(W2N)
-                    calculatedValue = mean(precipData(groupMask), 'omitnan') * 10;
+                newTime = binEdges(1:end-1) + binDuration/2;
+                newIntensity = nan(numel(newTime), 1);
 
-                    % Threshold to filter piezoelectric sensor noise/drift
-                    if calculatedValue < 0.01
-                        newIntensity(i) = 0;
-                    else
-                        newIntensity(i) = calculatedValue;
+                for i = 1:numel(newTime)
+                    groupMask = groups == i;
+                    if any(groupMask)
+                        calculatedValue = mean(precipData(groupMask), 'omitnan') * 10;
+                        if calculatedValue < 0.01
+                            newIntensity(i) = 0;
+                        else
+                            newIntensity(i) = calculatedValue;
+                        end
                     end
                 end
             end

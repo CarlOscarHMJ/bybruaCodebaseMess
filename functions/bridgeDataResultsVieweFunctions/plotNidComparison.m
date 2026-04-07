@@ -31,6 +31,7 @@ allData = [allWindAngle, allWindSpeed];
 fig = createFigure(1, 'RWIV Multi-Criteria Validation');
 tlo = tiledlayout('flow', 'TileSpacing', 'compact', 'Padding', 'tight');
 hFill = [];
+set(fig, 'WindowButtonDownFcn', @onWindowButtonDown);
 
 for i = 1:length(flagFields)
     nexttile;
@@ -41,6 +42,7 @@ for i = 1:length(flagFields)
     events = allStats(allStats.(currentFlag), :);
     events = events(rain < 50, :); 
     currentRain = rain(rain < 50);
+    eventDurations = events.duration;
     
     if strcmpi(windDomain, 'local')
         windSpeed = [events.WindSpeed.mean]';
@@ -66,8 +68,10 @@ for i = 1:length(flagFields)
     noRainIdxs = currentRain == 0;
     rainIdxs = ~noRainIdxs;
     
-    scatter(windAngle(noRainIdxs), windSpeed(noRainIdxs), accSize(noRainIdxs), 'red', 'filled', 'MarkerFaceAlpha', 0.8, 'MarkerEdgeAlpha', 0);
-    scatter(windAngle(rainIdxs), windSpeed(rainIdxs), accSize(rainIdxs), currentRain(rainIdxs), 'filled', 'MarkerFaceAlpha', 0.8, 'MarkerEdgeAlpha', 0);
+    hDryScatter = scatter(windAngle(noRainIdxs), windSpeed(noRainIdxs), accSize(noRainIdxs), 'red', 'filled', 'MarkerFaceAlpha', 0.8, 'MarkerEdgeAlpha', 0);
+    hWetScatter = scatter(windAngle(rainIdxs), windSpeed(rainIdxs), accSize(rainIdxs), currentRain(rainIdxs), 'filled', 'MarkerFaceAlpha', 0.8, 'MarkerEdgeAlpha', 0);
+    setScatterUserData(hDryScatter, eventDurations(noRainIdxs, :), currentRain(noRainIdxs), acc(noRainIdxs));
+    setScatterUserData(hWetScatter, eventDurations(rainIdxs, :), currentRain(rainIdxs), acc(rainIdxs));
     
     colormap(myColorMap());
     clim([0 25]);
@@ -211,4 +215,80 @@ end
 saveName = ['RviwFlagEvaluation' char(upper(windDomain(1))) windDomain(2:end) '_' strjoin(strrep(flagNames, ' ', '_'), "_")];
 saveName = strrm(saveName, ["\", "$", "(", ")", ","]);
 saveFig(fig, figureFolder, saveName, saveHeight, saveWidth);
+end
+
+function setScatterUserData(scatterHandle, durations, rain, acceleration)
+% Stores event metadata required for click-to-inspect behavior.
+scatterHandle.UserData = struct( ...
+    'durations', durations, ...
+    'rain', rain, ...
+    'acceleration', acceleration);
+end
+
+function onWindowButtonDown(fig, ~)
+% Opens the RWIV dashboard for the nearest clicked scatter point.
+if ~strcmp(get(fig, 'SelectionType'), 'normal')
+    return;
+end
+
+ax = gca;
+if isempty(ax) || ~isa(ax, 'matlab.graphics.axis.Axes')
+    return;
+end
+
+clickCoords = ax.CurrentPoint(1, 1:2);
+clickX = clickCoords(1);
+clickY = clickCoords(2);
+
+xLimits = ax.XAxis.Limits;
+yLimits = ax.YAxis.Limits;
+xTotalRange = diff(xLimits);
+yTotalRange = diff(yLimits);
+
+if xTotalRange <= 0 || yTotalRange <= 0
+    return;
+end
+
+scatterObjects = findobj(ax, 'Type', 'scatter');
+minDist = inf;
+bestIdx = 0;
+bestScatter = [];
+
+for i = 1:numel(scatterObjects)
+    currentScatter = scatterObjects(i);
+    if isempty(currentScatter.XData) || isempty(currentScatter.UserData)
+        continue;
+    end
+
+    xData = currentScatter.XData(:);
+    yData = currentScatter.YData(:);
+    isFinite = isfinite(xData) & isfinite(yData);
+    if ~any(isFinite)
+        continue;
+    end
+
+    xData = xData(isFinite);
+    yData = yData(isFinite);
+
+    normalizedDist = ((xData - clickX) / xTotalRange).^2 + ((yData - clickY) / yTotalRange).^2;
+    [localMin, localIdx] = min(normalizedDist);
+
+    if ~isempty(localMin) && localMin < minDist
+        minDist = localMin;
+        bestIdx = find(isFinite, localIdx, 'first');
+        bestIdx = bestIdx(end);
+        bestScatter = currentScatter;
+    end
+end
+
+if isempty(bestScatter) || minDist >= 0.05
+    return;
+end
+
+eventInfo = bestScatter.UserData;
+startTime = eventInfo.durations(bestIdx, 1);
+endTime = eventInfo.durations(bestIdx, 2);
+fprintf('Selected event at %.2f deg, %.2f m/s (rain: %.2f mm/h, acc: %.3f)\n', ...
+    bestScatter.XData(bestIdx), bestScatter.YData(bestIdx), eventInfo.rain(bestIdx), eventInfo.acceleration(bestIdx));
+inspectDayResponse(startTime, endTime, "freqMethod", "burg");
 end

@@ -20,7 +20,15 @@ end
 startDate = formatDatetime(startDate);
 endDate = formatDatetime(endDate, startDate);
 
-byBroaOverview = initializeBridgeData(startDate, endDate, options);
+byBroaOverview = getBridgeData(startDate, endDate, ...
+                        dataRoot=options.dataRoot,...
+                        applyFilter=options.applyFilter, ...
+                        filterType='butter',...
+                        filterOrder=options.filterOrder, ...
+                        filterLowFreq=options.filterLowFreq, ...
+                        filterHighFreq=options.filterHighFreq, ...
+                        plotFilter=false, ...
+                        plotTimeResponse=false);
 
 if strlength(options.plotTitle) == 0
     options.plotTitle = sprintf('%s to %s', datestr(startDate, 'dd-mmm-yyyy HH:MM'), datestr(endDate, 'dd-mmm-yyyy HH:MM'));
@@ -57,21 +65,6 @@ else
 end
 end
 
-function byBroaOverview = initializeBridgeData(startDate, endDate, options)
-% initializeBridgeData creates the bridge project object and applies signal filters.
-byBroa = BridgeProject(options.dataRoot, startDate, endDate);
-byBroaOverview = BridgeOverview(byBroa);
-byBroaOverview = byBroaOverview.fillMissingDataPoints();
-
-if options.applyFilter
-    byBroaOverview = byBroaOverview.designFilter('butter', ...
-        order=options.filterOrder, ...
-        fLow=options.filterLowFreq, ...
-        fHigh=options.filterHighFreq);
-    byBroaOverview = byBroaOverview.applyFilter();
-end
-end
-
 function freqInfo = plotAndSaveDiagnostics(byBroaOverview, options)
 % plotAndSaveDiagnostics calculates frequency responses and exports plots.
 freqInfo = cell(length(options.cables), 1);
@@ -82,7 +75,7 @@ end
 
 for i = 1:length(options.cables)
     currentCable = options.cables(i);
-    try
+    %try
         freqInfo{i} = byBroaOverview.plotRwivDiagnostic(currentCable, [], ...
             deckFields=["Conc_Z", "Steel_Z"], ...
             periodogramSensor=options.sensor, ...
@@ -91,8 +84,8 @@ for i = 1:length(options.cables)
             freqMethod=options.freqMethod, ...
             burgOrder=options.burgOrder, ...
             figureFolder=options.figureFolder);
-    catch executionError
-        warning('Error processing cable %s: %s', currentCable, executionError.message);
-    end
+    % catch executionError
+    %     warning('Error processing cable %s: %s', currentCable, executionError.message);
+    % end
 end
 end

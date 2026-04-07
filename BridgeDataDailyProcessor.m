@@ -29,6 +29,7 @@ arguments
     option.testCode {mustBeA(option.testCode, 'logical')} = false
     option.reRun {mustBeA(option.reRun, 'logical')} = false
     option.printProgress {mustBeA(option.printProgress, 'logical')} = true
+    option.numWorkers {mustBeInteger} = feature('numcores')
 end
 
 waitForExecutionTime(executionTime);
@@ -37,7 +38,6 @@ addpath('functions');
 dataRoot = 'Data';
 segmentLength = minutes(10);
 accelerometers = ["Conc_X","Steel_X","Conc_Y","Steel_Y","Conc_Z","Steel_Z"];
-option.printProgress = true;
 
 startDate = datetime(2018,1,1);
 endDate = datetime(2026,1,1);
@@ -83,15 +83,16 @@ end
 
 processDay = @(dayIndex) processBridgeDay(dayIndex, targetDates, dataRoot, segmentLength, ...
     accelerometers, targetFreqs, freqTolerance, targetCoherenceFreq, coherenceLimit, ...
-    dailyResultsCell, progressQueue);
+    progressQueue);
 
 if useParfor
+    createParallelPool(option.numWorkers);
     parfor i = 1:length(dayIndices)
-        processDay(dayIndices(i));
+        dailyResultsCell{i} = processDay(dayIndices(i));
     end
 else
     for i = 1:length(dayIndices)
-        processDay(dayIndices(i));
+        dailyResultsCell{i} = processDay(dayIndices(i));
     end
 end
 
@@ -107,9 +108,9 @@ end
 
 end
 
-function processBridgeDay(dayIndex, targetDates, dataRoot, segmentLength, ...
+function dailyResultsCell = processBridgeDay(dayIndex, targetDates, dataRoot, segmentLength, ...
     accelerometers, targetFreqs, freqTolerance, targetCoherenceFreq, coherenceLimit, ...
-    dailyResultsCell, progressQueue)
+    progressQueue)
 % processBridgeDay Processes bridge monitoring data for a single day
 % Notes:
 %   - Fills dailyResultsCell{dayIndex} with computed statistics
@@ -155,10 +156,11 @@ try
         dayStatsCell{t} = stats;
     end
 
-    dailyResultsCell{dayIndex} = vertcat(dayStatsCell{:});
+    dailyResultsCell = vertcat(dayStatsCell{:});
     send(progressQueue, dayIndex);
 
 catch
+    dailyResultsCell = {};
     send(progressQueue, dayIndex);
 end
 

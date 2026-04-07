@@ -527,7 +527,7 @@ classdef BridgeOverview
 
             fig = createFigure(7, 'RWIV Dashboard');
 
-            persistent periodogramContext displayMode;
+            persistent periodogramContext displayMode windSourceGlobal;
             periodogramContext = struct( ...
                 'bridgeData', bridgeData, ...
                 'cableData', cableData, ...
@@ -547,6 +547,7 @@ classdef BridgeOverview
                 'plotTitle', opts.plotTitle ...
             );
             displayMode = opts.freqMethod;
+            windSourceGlobal = true;
 
             set(fig, 'KeyPressFcn', @(src, event) onKeyPress(event));
 
@@ -578,8 +579,13 @@ classdef BridgeOverview
             fprintf('Finished Diagnostics plot in %3.1f seconds\n', toc);
 
             bridgeTimeLimits = [bridgeData.Time(1), bridgeData.Time(end)];
-            linkaxes(findobj(gcf, 'Type', 'axes'), 'x');
-            arrayfun(@(ax) xlim(ax, bridgeTimeLimits), findobj(gcf, 'Type', 'axes'));
+
+            allAxes = findobj(gcf, 'Type', 'axes');
+            datetimeAxes = allAxes(arrayfun(@(ax) isa(ax.XLim(1), 'datetime'), allAxes));
+            if ~isempty(datetimeAxes)
+                %linkaxes(flip(datetimeAxes),'x'); 
+                linkprop(datetimeAxes,'XLim');
+            end
 
             function onKeyPress(event)
                 ctx = periodogramContext;
@@ -762,44 +768,58 @@ classdef BridgeOverview
                 ylim([0 inf]);
 
                 yyaxis right
-                densityTable = calculateAirDensity(weather);
-                plot(densityTable.Time, densityTable.density, 's-', ...
+                plot(weather.AirTemp.Time, weather.AirTemp.Data, 's-', ...
                     'Color', [0.85 0.33 0.1], 'MarkerFaceColor', [0.85 0.33 0.1]);
-                ylabel('Density of Air $\mathrm{(kg/m^3)}$', 'Interpreter', 'latex');
-                ylim([1.1 1.3]);
+                ylabel('Temperature ($^\circ$C)');
                 axis tight;
-            end
-
-            function airDensityTable = calculateAirDensity(weather)
-                pressureTable = timetable(weather.AirPress.Time, weather.AirPress.Data);
-                temperatureTable = timetable(weather.AirTemp.Time, weather.AirTemp.Data);
-                synchronizedData = synchronize(pressureTable, temperatureTable, ...
-                    'regular', 'mean', 'TimeStep', minutes(10));
-
-                specificGasConstant = 287.05;
-                hPa2Pa = 100;
-                celcius2Kelvin = 273.15;
-
-                densityValues = (synchronizedData.Var1_pressureTable * hPa2Pa) ./ ...
-                    (specificGasConstant .* (synchronizedData.Var1_temperatureTable + celcius2Kelvin));
-                airDensityTable = synchronizedData;
-                airDensityTable.density = densityValues;
             end
 
             function plotWindSpeedAndDirection(ax, weather)
+                persistent windGlobal;
                 axes(ax);
-                yyaxis left
-                plot(weather.UNormalC1.Time, weather.UNormalC1.Data);
-                ylabel('Wind Speed $\bar{u}_N$ (m/s)', 'Interpreter', 'latex');
+                
+                if isempty(windGlobal)
+                    windGlobal = true;
+                end
+                
+                updateWindPlot();
+                
+                function updateWindPlot()
+                    cla(ax, 'reset');
+                    hold(ax, 'on');
+                    
+                    if windGlobal
+                        yyaxis left
+                        plot(weather.WindSpeed.Time, weather.WindSpeed.Data);
+                        ylabel('Compass wind speed $U$ (m/s)', 'Interpreter', 'latex');
 
-                yyaxis right
-                scatter(weather.PhiC1.Time, weather.PhiC1.Data, 15, 'filled', 'MarkerFaceAlpha', 0.3);
-                ylabel('Wind Direction $\Phi\, (^\circ)$', 'Interpreter', 'latex', 'FontSize', 12);
-                %ylim([0 360]);
-                %yticks(0:90:360);
-                grid on;
-                title('Wind angle on C1');
-                axis tight;
+                        yyaxis right
+                        scatter(weather.WindDir.Time, weather.WindDir.Data, 15, 'filled', 'MarkerFaceAlpha', 0.3);
+                        ylabel('Compass wind direction $\Phi\, (^\circ)$', 'Interpreter', 'latex', 'FontSize', 12);
+                        grid on;
+                        title('Wind angle (click to toggle C1/global)');
+                    else
+                        yyaxis left
+                        plot(weather.UNormalC1.Time, weather.UNormalC1.Data);
+                        ylabel('Wind Speed $\bar{u}_N$ (m/s)', 'Interpreter', 'latex');
+
+                        yyaxis right
+                        scatter(weather.PhiC1.Time, weather.PhiC1.Data, 15, 'filled', 'MarkerFaceAlpha', 0.3);
+                        ylabel('Wind Direction $\Phi\, (^\circ)$', 'Interpreter', 'latex', 'FontSize', 12);
+                        grid on;
+                        title('Wind angle on C1 (click to toggle C1/global)');
+                    end
+                    
+                    axis tight;
+                    set(ax, 'ButtonDownFcn', @(src,~) toggleWindSource());
+                end
+                
+                set(ax, 'ButtonDownFcn', @(src,~) toggleWindSource());
+                
+                function toggleWindSource()
+                    windGlobal = ~windGlobal;
+                    updateWindPlot();
+                end
             end
 
             function plotTurbulenceWindRose(weather)
@@ -812,11 +832,18 @@ classdef BridgeOverview
                 meanWindDir = windDirTable.Var1;
                 meanWindSpeed = windSpeedTable.Var1;
                 turbulenceIntensity = tiTable.Var1;
+                
+                if isscalar(meanWindDir)
+                    Ylim = [0 meanWindSpeed*1.1];
+                else
+                    Ylim = [0 max(meanWindSpeed)];
+                end
 
                 [~, colorBarHandle] = ScatterWindRose(meanWindDir, meanWindSpeed, ...
                     'Z', turbulenceIntensity, ...
                     'labelZ', '', ...
-                    'labelY', '$\bar{u}$ (m/s)');
+                    'labelY', '$\bar{u}$ (m/s)',...
+                    'Ylim', Ylim);
 
                 set(colorBarHandle, 'location', 'WestOutside', 'TickLabelInterpreter', 'latex');
                 ylabel(colorBarHandle, '$I_u$ (-)', 'Interpreter', 'latex', ...
