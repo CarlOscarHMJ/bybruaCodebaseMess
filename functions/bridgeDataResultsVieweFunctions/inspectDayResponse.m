@@ -4,7 +4,7 @@ arguments
     startDate 
     endDate 
     options.dataRoot string = '/home/carl/OneDrive/Documents/PhD_Stavanger/ByBrua/Analysis/Data'
-    options.cables string = ["C1E_y", "C1W_y"]
+    %options.cables string = ["C1E_y", "C1W_y"]
     options.sensor (1,1) string {mustBeMember(options.sensor, ["Conc", "Steel"])} = "Conc"
     options.applyFilter logical = true
     options.filterOrder double = 7
@@ -67,25 +67,29 @@ end
 
 function freqInfo = plotAndSaveDiagnostics(byBroaOverview, options)
 % plotAndSaveDiagnostics calculates frequency responses and exports plots.
+cableString = byBroaOverview.project.cableData.Properties.VariableNames;
+options.cables = cableString(contains(cableString,'y'));
 freqInfo = cell(length(options.cables), 1);
 
 if strlength(options.figureFolder) > 0 && ~exist(options.figureFolder, 'dir')
     mkdir(options.figureFolder);
 end
+try
+    currentCable = options.cables(1);
+catch 
+    currentCable = {'NoCable'};
+end
 
-for i = 1:length(options.cables)
-    currentCable = options.cables(i);
-    %try
-        freqInfo{i} = byBroaOverview.plotRwivDiagnostic(currentCable, [], ...
-            deckFields=["Conc_Z", "Steel_Z"], ...
-            periodogramSensor=options.sensor, ...
-            plotTitle=options.plotTitle, ...
-            nfft=options.nfft, ...
-            freqMethod=options.freqMethod, ...
-            burgOrder=options.burgOrder, ...
-            figureFolder=options.figureFolder);
-    % catch executionError
-    %     warning('Error processing cable %s: %s', currentCable, executionError.message);
-    % end
+try
+    freqInfo{1} = byBroaOverview.plotRwivDiagnostic(currentCable, [], ...
+        deckFields=["Conc_Z", "Steel_Z"], ...
+        periodogramSensor=options.sensor, ...
+        plotTitle=options.plotTitle, ...
+        nfft=options.nfft, ...
+        freqMethod=options.freqMethod, ...
+        burgOrder=options.burgOrder, ...
+        figureFolder=options.figureFolder);
+catch executionError
+    warning('Error processing cable %s: %s', currentCable{1}, executionError.message);
 end
 end

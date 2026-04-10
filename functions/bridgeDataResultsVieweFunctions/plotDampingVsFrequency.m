@@ -1,7 +1,7 @@
 function plotDampingVsFrequency(allStats, limits, options)
     % plotDampingVsFrequency Creates scatter plot of damping ratio vs peak frequency
     %
-    %   Plots segment-level aggregated damping values against peak frequencies,
+    %   Plots individual peak damping values against peak frequencies,
     %   color-coded by RWIV classification status.
     %
     % Arguments:
@@ -9,7 +9,7 @@ function plotDampingVsFrequency(allStats, limits, options)
     %   limits                - Struct with targetFreqs, freqTolerance
     %   options.specFlagField - RWIV classification flag field (default: 'flag_StructuralResponseMatch')
     %   options.envFlagField  - Environmental match flag field (default: 'flag_EnvironmentalMatch')
-    %   options.frequencyFocus - 'all' (mean per segment) or 'target' (only near target freqs)
+    %   options.frequencyFocus - 'all' (all peaks) or 'target' (only near target freqs)
     %   options.targetFreqs_override - Override target frequencies from limits
     %   options.freqTolerance_override - Override tolerance from limits
     %   options.figureFolder  - Save directory (default: '')
@@ -29,6 +29,8 @@ function plotDampingVsFrequency(allStats, limits, options)
         options.targetFreqs_override double = []
         options.freqTolerance_override double = []
         options.figureFolder char = ''
+        options.yAxisScale (1,1) string {mustBeMember(options.yAxisScale, ["linear", "log"])} = "log"
+        options.xAxisScale (1,1) string {mustBeMember(options.xAxisScale, ["linear", "log"])} = "linear"
     end
 
     targetFreqs = iResolveTargetFreqs(limits, options);
@@ -67,12 +69,12 @@ function plotDampingVsFrequency(allStats, limits, options)
         for col = 1:numCols
             accel = accels{col};
             sensor = [accel, '_', direction];
-            [segFreqs, segDamping, validIdx] = extractSegmentDamping(allStats, sensor, targetFreqs, freqTolerance, options.frequencyFocus);
-            if ~isempty(segFreqs)
-                segSpecFlags = specFlags(validIdx);
-                segEnvFlags = envFlags(validIdx);
-                segIsWet = isWet(validIdx);
-                allData{row, col} = struct('freqs', segFreqs, 'damping', segDamping, ...
+            [peakFreqs, peakDamping, segmentIndices] = extractAllPeaks(allStats, sensor, targetFreqs, freqTolerance, options.frequencyFocus);
+            if ~isempty(peakFreqs)
+                segSpecFlags = specFlags(segmentIndices);
+                segEnvFlags = envFlags(segmentIndices);
+                segIsWet = isWet(segmentIndices);
+                allData{row, col} = struct('freqs', peakFreqs, 'damping', peakDamping, ...
                     'isRwiv', segSpecFlags, 'isBlue', ~segSpecFlags & segEnvFlags & segIsWet, ...
                     'isGray', ~segSpecFlags & (~segEnvFlags | ~segIsWet));
             end
@@ -80,14 +82,20 @@ function plotDampingVsFrequency(allStats, limits, options)
     end
 
     globalMaxDamping = 0;
+    globalMinDamping = inf;
     for row = 1:numRows
         for col = 1:numCols
             if isstruct(allData{row, col})
-                globalMaxDamping = max(globalMaxDamping, max(allData{row, col}.damping(~isnan(allData{row, col}.damping))));
+                validDamping = allData{row, col}.damping(~isnan(allData{row, col}.damping) & allData{row, col}.damping > 0);
+                if ~isempty(validDamping)
+                    globalMaxDamping = max(globalMaxDamping, max(validDamping));
+                    globalMinDamping = min(globalMinDamping, min(validDamping));
+                end
             end
         end
     end
     yMax = max(0.05, globalMaxDamping) + 0.02;
+    yMinLog = iResolveLogYMin(globalMinDamping);
 
     for row = 1:numRows
         direction = directions{row};
@@ -124,7 +132,11 @@ function plotDampingVsFrequency(allStats, limits, options)
 
             for tf = targetFreqs(:)'
                 xVerts = [tf - freqTolerance, tf - freqTolerance, tf + freqTolerance, tf + freqTolerance];
-                yVerts = [0, yMax, yMax, 0];
+                yPatchMin = 0;
+                if options.yAxisScale == "log"
+                    yPatchMin = yMinLog;
+                end
+                yVerts = [yPatchMin, yMax, yMax, yPatchMin];
                 patch(ax, xVerts, yVerts, [0.5 0.5 0.5], 'FaceAlpha', 0.15, 'EdgeColor', 'none', 'HitTest', 'off');
                 xline(ax, tf, '--k', 'LineWidth', 1.0, 'Alpha', 0.6, 'HitTest', 'off');
             end
@@ -135,17 +147,30 @@ function plotDampingVsFrequency(allStats, limits, options)
             end
             title(ax, sprintf('\\texttt{%s}', strrep(sensor, '_', '\_')), 'Interpreter', 'latex');
             set(ax, 'TickLabelInterpreter', 'latex');
-            xlim(ax, [0.4 10]);
-            ylim(ax, [0 yMax]);
+            set(ax, 'YScale',options.yAxisScale)
+            set(ax, 'XScale',options.xAxisScale)
         end
     end
 
     allAxes = findobj(tlo, 'Type', 'axes');
     for ax = allAxes'
         xlim(ax, [0.4 10]);
-        ylim(ax, [0 yMax]);
+        if strcmp(ax.YScale, 'log')
+            yUpper = max(yMax, yMinLog * 10);
+            ylim(ax, [yMinLog yUpper]);
+        else
+            yUpper = max(yMax, 0.01);
+            ylim(ax, [0 yUpper]);
+        end
     end
     linkaxes(allAxes, 'xy');
+
+    for ax = allAxes'
+        yLimits = ylim(ax);
+        iEnsureAtLeastTwoYTicks(ax, yLimits(1), yLimits(2));
+        set(ax, 'YTickMode', 'manual');
+        ytickformat(ax, '%.4g');
+    end
 
     legend(ax, {'Background','Env. Match','RWIV Event'}, ...
         'Location', 'best', 'Interpreter', 'latex');
@@ -172,12 +197,11 @@ function freqTolerance = iResolveTolerance(limits, options)
     end
 end
 
-function [segFreqs, segDamping, validIdx] = extractSegmentDamping(allStats, sensor, targetFreqs, freqTolerance, frequencyFocus)
+function [peakFreqs, peakDamping, segmentIndices] = extractAllPeaks(allStats, sensor, targetFreqs, freqTolerance, frequencyFocus)
     numSegments = height(allStats);
-    segFreqs = zeros(numSegments, 1);
-    segDamping = zeros(numSegments, 1);
-    validIdx = zeros(numSegments, 1);
-    count = 0;
+    peakFreqs = [];
+    peakDamping = [];
+    segmentIndices = [];
 
     for i = 1:numSegments
         if ~isfield(allStats.psdPeaks, sensor)
@@ -200,33 +224,52 @@ function [segFreqs, segDamping, validIdx] = extractSegmentDamping(allStats, sens
 
         switch frequencyFocus
             case 'target'
-                peakFreqs = [];
-                peakDamps = [];
                 for tf = targetFreqs(:)'
                     mask = abs(locations - tf) <= freqTolerance;
                     if any(mask)
-                        peakFreqs = [peakFreqs; tf];
-                        peakDamps = [peakDamps; mean(damping(mask))];
+                        peakFreqs = [peakFreqs; locations(mask)];
+                        peakDamping = [peakDamping; damping(mask)];
+                        segmentIndices = [segmentIndices; repmat(i, sum(mask), 1)];
                     end
                 end
-                if isempty(peakFreqs), continue; end
-                count = count + 1;
-                segFreqs(count) = mean(peakFreqs);
-                segDamping(count) = mean(peakDamps);
-                validIdx(count) = i;
 
             case 'all'
-                count = count + 1;
-                segFreqs(count) = mean(locations);
-                segDamping(count) = mean(damping);
-                validIdx(count) = i;
+                peakFreqs = [peakFreqs; locations];
+                peakDamping = [peakDamping; damping];
+                segmentIndices = [segmentIndices; repmat(i, length(locations), 1)];
 
             otherwise
                 error('frequencyFocus must be ''all'' or ''target''');
         end
     end
+end
 
-    segFreqs = segFreqs(1:count);
-    segDamping = segDamping(1:count);
-    validIdx = validIdx(1:count);
+function yMinLog = iResolveLogYMin(globalMinDamping)
+    if isfinite(globalMinDamping) && globalMinDamping > 0
+        yMinLog = 10^floor(log10(globalMinDamping));
+    else
+        yMinLog = 1e-3;
+    end
+end
+
+function iEnsureAtLeastTwoYTicks(ax, yMin, yMax)
+    if ~isfinite(yMin) || ~isfinite(yMax)
+        return;
+    end
+
+    if yMax <= yMin
+        if strcmp(ax.YScale, 'log')
+            yMin = max(yMin, eps);
+            yMax = yMin * 10;
+        else
+            yMax = yMin + 1;
+        end
+        ylim(ax, [yMin yMax]);
+    end
+
+    yTicks = yticks(ax);
+    yTicks = yTicks(isfinite(yTicks) & yTicks >= yMin & yTicks <= yMax);
+    if numel(yTicks) < 2
+        yticks(ax, [yMin, yMax]);
+    end
 end

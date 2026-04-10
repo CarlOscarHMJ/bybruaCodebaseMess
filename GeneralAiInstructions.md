@@ -28,3 +28,5 @@ Project Mandates: ByBrua Analysis
 - Use write functions with a header (what does the function do + etc). 
 - Use arguments for functions and use option as much as possible with default settings.
 - USE MEANINGFUL VARIABLE NAMES! The code should be readable by itself!
+
+Use createFigure and saveFigure

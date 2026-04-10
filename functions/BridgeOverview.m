@@ -484,6 +484,7 @@ classdef BridgeOverview
             % Keyboard shortcuts (when figure is active):
             %   SPACE   - Toggle between PSD (welch) and spectrogram (stft) mode
             %   X/Y/Z   - Switch to X, Y, or Z direction
+            %   +/-     - Zoom out/in (multiplicative, 10min to 4 days range)
             %   S       - Save figure to disk
             %
             arguments
@@ -528,6 +529,7 @@ classdef BridgeOverview
             fig = createFigure(7, 'RWIV Dashboard');
 
             persistent periodogramContext displayMode windSourceGlobal;
+            originalDuration = seconds(timePeriod(2) - timePeriod(1));
             periodogramContext = struct( ...
                 'bridgeData', bridgeData, ...
                 'cableData', cableData, ...
@@ -544,7 +546,10 @@ classdef BridgeOverview
                 'currentSensor', opts.periodogramSensor, ...
                 'currentDirection', 'Z', ...
                 'figureFolder', opts.figureFolder, ...
-                'plotTitle', opts.plotTitle ...
+                'plotTitle', opts.plotTitle, ...
+                'originalPeriod', timePeriod, ...
+                'originalDuration', originalDuration, ...
+                'zoomLevel', 0 ...
             );
             displayMode = opts.freqMethod;
             windSourceGlobal = true;
@@ -558,10 +563,10 @@ classdef BridgeOverview
 
             if strcmpi(displayMode, "stft")
                 [freqInfo.freqResp,ax] = plotPeriodogram(periodogramContext.currentSensor);
-                title(ax, sprintf('STFT Periodogram: %s %s (%s - SPACE:mode X/Y/Z:direction S:save)', periodogramContext.currentSensor, periodogramContext.currentDirection, displayMode), 'FontSize', 10);
+                title(ax, sprintf('STFT Periodogram: %s %s (%s - SPACE:mode X/Y/Z:direction +/-:zoom S:save)', periodogramContext.currentSensor, periodogramContext.currentDirection, displayMode), 'FontSize', 10);
             else
                 [freqInfo.freqResp,ax] = plotFrequencyResponse(periodogramContext.currentSensor);
-                title(ax, sprintf('Frequency Response (%s %s - SPACE:mode X/Y/Z:direction S:save)', displayMode, periodogramContext.currentDirection), 'FontSize', 10);
+                title(ax, sprintf('Frequency Response (%s %s - SPACE:mode +/-:zoom X/Y/Z:direction S:save)', displayMode, periodogramContext.currentDirection), 'FontSize', 10);
             end
 
             if strcmpi(opts.coherenceType, "wavelet")
@@ -603,6 +608,18 @@ classdef BridgeOverview
                     needsUpdate = true;
                 elseif strcmp(event.Key, 's')
                     saveFigure(ctx);
+                elseif strcmp(event.Key, 'minus') || strcmp(event.Key, '-') || strcmp(event.Key, 'subtract')
+                    periodogramContext.zoomLevel = periodogramContext.zoomLevel + 1;
+                    zoomInOut(ctx, periodogramContext.zoomLevel);
+                    return;
+                elseif strcmp(event.Key, 'plus') || strcmp(event.Key, '+') || strcmp(event.Key, 'add')
+                    periodogramContext.zoomLevel = max(periodogramContext.zoomLevel - 1, 0);
+                    zoomInOut(ctx, periodogramContext.zoomLevel);
+                    return;
+                elseif strcmp(event.Key, 'n')
+                    periodogramContext.nfft = periodogramContext.nfft * 2;
+                    needsUpdate = true;
+
                 end
 
                 if needsUpdate
@@ -616,7 +633,7 @@ classdef BridgeOverview
                     end
                     uistack(ax, 'top');
                     directionLabel = periodogramContext.currentDirection;
-                    title(ax, sprintf('Frequency Response (%s %s - SPACE:mode X/Y/Z:direction S:save)', displayMode, directionLabel), 'FontSize', 10);
+                    title(ax, sprintf('Frequency Response (%s %s - SPACE:mode +/-:zoom X/Y:Z:direction S:save), nfft = %d', displayMode, directionLabel,periodogramContext.nfft), 'FontSize', 10);
                     drawnow;
                 end
             end
@@ -634,6 +651,40 @@ classdef BridgeOverview
                     exportgraphics(gcf, savePath, 'Resolution', 300);
                     fprintf('Saved: %s\n', savePath);
                 end
+            end
+
+            function zoomInOut(ctx, newZoomLevel)
+                minDuration = 10 * 60;
+                maxDuration = 4 * 24 * 60 * 60;
+                
+                newDurationSec = ctx.originalDuration * (2 ^ newZoomLevel);
+                newDurationSec = min(max(newDurationSec, minDuration), maxDuration);
+                
+                centerTime = mean(ctx.originalPeriod);
+                newPeriod = [centerTime - seconds(newDurationSec/2), centerTime + seconds(newDurationSec/2)];
+                
+                durationHours = newDurationSec / 3600;
+                if durationHours < 1
+                    zoomLabel = sprintf('%.0f min', durationHours * 60);
+                elseif durationHours < 24
+                    zoomLabel = sprintf('%.1f hours', durationHours);
+                else
+                    zoomLabel = sprintf('%.1f days', durationHours / 24);
+                end
+                
+                fprintf('Zoom level %d: Showing %s (±%.1f hours)\n', newZoomLevel, zoomLabel, durationHours/2);
+                
+                zoomTitle = char(ctx.plotTitle);
+                if newZoomLevel > 0
+                    zoomTitle = [zoomTitle, sprintf(' (Zoom: %s)', zoomLabel)];
+                end
+                
+                inspectDayResponse(newPeriod(1), newPeriod(2), ...
+                    'sensor', ctx.currentSensor, ...
+                    'freqMethod', ctx.freqMethod, ...
+                    'burgOrder', ctx.burgOrder, ...
+                    'figureFolder', ctx.figureFolder, ...
+                    'plotTitle', zoomTitle);
             end
 
             function filteredWeather = filterWeatherData(weather, timeRange)
