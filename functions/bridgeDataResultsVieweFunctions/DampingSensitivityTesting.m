@@ -16,6 +16,8 @@ arguments
     options.minPeakProminence (1,1) double {mustBePositive} = 4
     options.clusterToleranceHz (1,1) double {mustBePositive} = 0.12
     options.printTimes logical = false
+    options.timeRepeats (1,1) double {mustBeInteger, mustBePositive} = 7
+    options.timeWarmupRuns (1,1) double {mustBeInteger, mustBeNonnegative} = 1
     options.plotResults logical = true
     options.plotTitle string = ""
     options.saveFigure logical = false
@@ -71,69 +73,70 @@ peakPowerCol = zeros(0, 1);
 dampingCol = zeros(0, 1);
 runtimeSecCol = zeros(0, 1);
 
+timingNfft = zeros(0, 1);
+timingMedianSec = zeros(0, 1);
+timingMeanSec = zeros(0, 1);
+timingStdSec = zeros(0, 1);
+timingMinSec = zeros(0, 1);
+timingMaxSec = zeros(0, 1);
+timingRepeats = zeros(0, 1);
+timingPeaks = zeros(0, 1);
+
 nffts = unique(options.nffts(:), 'stable');
 
 for iNfft = 1:numel(nffts)
     currentNfft = nffts(iNfft);
-    tNfft = tic;
-
-    nfftPeaks = 0;
-    tmpSensor = strings(0, 1);
-    tmpPeakFreq = zeros(0, 1);
-    tmpPeakLogIntensity = zeros(0, 1);
-    tmpPeakPower = zeros(0, 1);
-    tmpDamping = zeros(0, 1);
-
-    for iSensor = 1:numel(sensors)
-        sensor = sensors(iSensor);
-        signal = double(bridgeData.(sensor));
-
-        [psd, f] = pburg(signal, options.burgOrder, currentNfft, fs);
-        relMask = f >= options.freqRange(1) & f <= options.freqRange(2);
-        logPsd = log(psd);
-
-        [peaks, locs] = findpeaks(logPsd(relMask), f(relMask), ...
-            'MinPeakProminence', options.minPeakProminence);
-
-        if isempty(locs)
-            continue;
-        end
-
-        nPeaks = numel(locs);
-        nfftPeaks = nfftPeaks + nPeaks;
-
-        localPeakPower = zeros(nPeaks, 1);
-        localDamping = zeros(nPeaks, 1);
-        for k = 1:nPeaks
-            [~, peakIdx] = min(abs(f - locs(k)));
-            localPeakPower(k) = psd(peakIdx);
-            localDamping(k) = iCalculatePeakDamping(f, psd, locs(k));
-        end
-
-        tmpSensor = [tmpSensor; repmat(sensor, nPeaks, 1)];
-        tmpPeakFreq = [tmpPeakFreq; locs(:)];
-        tmpPeakLogIntensity = [tmpPeakLogIntensity; peaks(:)];
-        tmpPeakPower = [tmpPeakPower; localPeakPower];
-        tmpDamping = [tmpDamping; localDamping];
+    for iWarmup = 1:options.timeWarmupRuns
+        iAnalyzeSingleNfft(bridgeData, sensors, fs, currentNfft, options);
     end
 
-    elapsedSec = toc(tNfft);
+    allTimings = zeros(options.timeRepeats, 1);
+    cachedAnalysis = struct();
+    for iRep = 1:options.timeRepeats
+        tNfft = tic;
+        currentAnalysis = iAnalyzeSingleNfft(bridgeData, sensors, fs, currentNfft, options);
+        allTimings(iRep) = toc(tNfft);
+        if iRep == 1
+            cachedAnalysis = currentAnalysis;
+        end
+    end
+
+    elapsedSec = median(allTimings, 'omitnan');
+    nfftPeaks = cachedAnalysis.nfftPeaks;
+
+    timingNfft = [timingNfft; currentNfft];
+    timingMedianSec = [timingMedianSec; elapsedSec];
+    timingMeanSec = [timingMeanSec; mean(allTimings, 'omitnan')];
+    timingStdSec = [timingStdSec; std(allTimings, 'omitnan')];
+    timingMinSec = [timingMinSec; min(allTimings)];
+    timingMaxSec = [timingMaxSec; max(allTimings)];
+    timingRepeats = [timingRepeats; options.timeRepeats];
+    timingPeaks = [timingPeaks; nfftPeaks];
 
     if options.printTimes
-        fprintf('nfft=%d | runtime=%.3fs | peaks=%d\n', currentNfft, elapsedSec, nfftPeaks);
+        fprintf(['nfft=%d | median=%.3fs | mean=%.3fs | std=%.3fs ' ...
+                 '| min=%.3fs | max=%.3fs | reps=%d | peaks=%d\n'], ...
+            currentNfft, ...
+            elapsedSec, ...
+            mean(allTimings, 'omitnan'), ...
+            std(allTimings, 'omitnan'), ...
+            min(allTimings), ...
+            max(allTimings), ...
+            options.timeRepeats, ...
+            nfftPeaks);
     end
 
-    if isempty(tmpPeakFreq)
+    if isempty(cachedAnalysis.peakFreq)
         continue;
     end
 
-    nRows = numel(tmpPeakFreq);
+    nRows = numel(cachedAnalysis.peakFreq);
     nfftCol = [nfftCol; repmat(currentNfft, nRows, 1)];
-    sensorCol = [sensorCol; tmpSensor];
-    peakFreqCol = [peakFreqCol; tmpPeakFreq];
-    peakLogIntensityCol = [peakLogIntensityCol; tmpPeakLogIntensity];
-    peakPowerCol = [peakPowerCol; tmpPeakPower];
-    dampingCol = [dampingCol; tmpDamping];
+    sensorCol = [sensorCol; cachedAnalysis.sensor];
+    peakFreqCol = [peakFreqCol; cachedAnalysis.peakFreq];
+    peakLogIntensityCol = [peakLogIntensityCol; cachedAnalysis.peakLogIntensity];
+    peakPowerCol = [peakPowerCol; cachedAnalysis.peakPower];
+    dampingCol = [dampingCol; cachedAnalysis.damping];
     runtimeSecCol = [runtimeSecCol; repmat(elapsedSec, nRows, 1)];
 end
 
@@ -155,6 +158,8 @@ end
 
 clusterSummary = iBuildClusterSummary(rawPeaks);
 perNfftSummary = iBuildPerNfftSummary(rawPeaks);
+timingSummary = table(timingNfft, timingMedianSec, timingMeanSec, timingStdSec, timingMinSec, timingMaxSec, timingRepeats, timingPeaks, ...
+    'VariableNames', {'nfft', 'runtimeMedianSec', 'runtimeMeanSec', 'runtimeStdSec', 'runtimeMinSec', 'runtimeMaxSec', 'timingRepeats', 'numPeaks'});
 
 if options.plotResults && ~isempty(rawPeaks)
     iPlotSensitivity(rawPeaks, clusterSummary, sensors, options, startDate, endDate);
@@ -180,6 +185,57 @@ results.meta = struct( ...
 results.rawPeaks = rawPeaks;
 results.perNfftSummary = perNfftSummary;
 results.clusterSummary = clusterSummary;
+results.timingSummary = timingSummary;
+end
+
+function analysis = iAnalyzeSingleNfft(bridgeData, sensors, fs, nfft, options)
+nfftPeaks = 0;
+tmpSensor = strings(0, 1);
+tmpPeakFreq = zeros(0, 1);
+tmpPeakLogIntensity = zeros(0, 1);
+tmpPeakPower = zeros(0, 1);
+tmpDamping = zeros(0, 1);
+
+for iSensor = 1:numel(sensors)
+    sensor = sensors(iSensor);
+    signal = double(bridgeData.(sensor));
+
+    [psd, f] = pburg(signal, options.burgOrder, nfft, fs);
+    relMask = f >= options.freqRange(1) & f <= options.freqRange(2);
+    logPsd = log(psd);
+
+    [peaks, locs] = findpeaks(logPsd(relMask), f(relMask), ...
+        'MinPeakProminence', options.minPeakProminence);
+
+    if isempty(locs)
+        continue;
+    end
+
+    nPeaks = numel(locs);
+    nfftPeaks = nfftPeaks + nPeaks;
+
+    localPeakPower = zeros(nPeaks, 1);
+    localDamping = zeros(nPeaks, 1);
+    for k = 1:nPeaks
+        [~, peakIdx] = min(abs(f - locs(k)));
+        localPeakPower(k) = psd(peakIdx);
+        localDamping(k) = iCalculatePeakDamping(f, psd, locs(k));
+    end
+
+    tmpSensor = [tmpSensor; repmat(sensor, nPeaks, 1)];
+    tmpPeakFreq = [tmpPeakFreq; locs(:)];
+    tmpPeakLogIntensity = [tmpPeakLogIntensity; peaks(:)];
+    tmpPeakPower = [tmpPeakPower; localPeakPower];
+    tmpDamping = [tmpDamping; localDamping];
+end
+
+analysis = struct();
+analysis.nfftPeaks = nfftPeaks;
+analysis.sensor = tmpSensor;
+analysis.peakFreq = tmpPeakFreq;
+analysis.peakLogIntensity = tmpPeakLogIntensity;
+analysis.peakPower = tmpPeakPower;
+analysis.damping = tmpDamping;
 end
 
 function dampingRatio = iCalculatePeakDamping(f, psd, peakFreq)
@@ -318,8 +374,8 @@ for iSensor = 1:numel(sensors)
         end
 
         newRow = table(sensor, nfft, height(block), meanDamping, stdDamping, ...
-            mean(block.runtimeSec, 'omitnan'), ...
-            'VariableNames', {'sensor', 'nfft', 'numPeaks', 'meanDamping', 'stdDamping', 'runtimeSec'});
+            mean(block.runtimeSec, 'omitnan'), median(block.runtimeSec, 'omitnan'), ...
+            'VariableNames', {'sensor', 'nfft', 'numPeaks', 'meanDamping', 'stdDamping', 'runtimeMeanSec', 'runtimeMedianSec'});
         perNfftSummary = [perNfftSummary; newRow];
     end
 end

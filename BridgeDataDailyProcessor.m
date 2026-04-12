@@ -206,7 +206,7 @@ end
     function [foundPeaks, flags] = checkSpectralPeaks(data, fields, targets, tol, fs)
         % Evaluates spectral peaks and estimates damping via half-power bandwidth interpolation.
         order = 50;
-        nfft = 2^11;
+        nfft = 2^15;
 
         for field = fields
             signal = double(data.(field));
