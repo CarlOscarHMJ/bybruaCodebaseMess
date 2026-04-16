@@ -12,6 +12,12 @@ allStats = reorientDeckAccelerometers(allStats);
 %% Get all flags
 limits.targetFreqs         = [3.174, 4.27, 6.32]; % Found centers of deck peaks at RWIV
 limits.freqTolerance       = 0.15;          % Tolerance in Hz
+limits.c1RwivTargetFreq    = limits.targetFreqs(1);
+limits.c1RwivFreqTolerance = 0.17;
+limits.c1CableDampingMax   = 0.015;
+limits.c5RwivTargetFreqs   = [4.60, 5.40, 9.20];
+limits.c5RwivTargetFreqsWithC1Mode = [4.60, 5.13, 5.40, 9.20];
+limits.c5RwivDampingMax    = 0.005;
 limits.targetCoherenceFreq = [3.22, 6.37];  % Found centers of co-coherence peaks at RWIV
 limits.coherenceLimit      = [-0.6,0.7];    % coCoherence value that is the lower limits for flagging
 limits.cableWindSpeed      = [8 12];
@@ -24,16 +30,16 @@ rng(112)
 plotFlags = ["flag_StructuralResponseMatch","flag_PSDTotal","flag_CohTotal","flag_EnvironmentalMatch","flag_PSDAllDirections","flag_PSDSelectedCs"];
 flagNames = ["PSD $\cap$ Coherence", "PSD", "Coherence", "Daniotti\,(2021)","PSD All Directions","PSD Selected Directions"];
 % ISDAC 2026 Paper figures
-% allStats = plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
+allStats = plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
 % plotNidComparisonPeakIntensity(allStats, plotFlags(2), limits, 'global', figureFolder,flagNames(2));
-% plotWindRoses(allStats,figureFolder)
+% plotWindRoses(allStats, figureFolder, stationarityLimit=0.2)
 % plotRiwvWeatherScatter3D(allStats, limits, figureFolder);
 % plotRwivWindSpeedVsTime(allStats,plotFlags(2),figureFolder,limits,flagNames(2));
 % plotDAuteuilComparison(allStats, plotFlags(2),flagNames(2), 29.8,  figureFolder, 'Data/Misc/DAuteuil2023ReviewData.csv','violin');
 
 
 %% Additional analysis for EURODYN
-% plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSDTotal',plotBackground=false,plotAllDirections=true)
+plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSDTotal',plotBackground=false,plotAllDirections=true)
 % plotSpectralShift(allStats,'flag_EnvironmentalMatch', ["Conc_Z", "Steel_Z"], limits,'local',figureFolder)
 clc
 % plotSpectralShiftHistogram(allStats, targetSensors=["Conc_Z", "Steel_Z"], ...
@@ -55,20 +61,63 @@ plotDampingVsFrequency(allStats, limits, ...
     frequencyFocus='all', ...
     figureFolder=figureFolder);
 
-plotDampingHistogram(allStats, ["flag_PSDTotal", "flag_PSD_Any4Points", ...
-                                "flag_EnvironmentalMatch","flag_PSDTotal_inGmm"], ...
-    flagNames=["PSD Total", "PSD any dir 4 points", "Daniotti Criteria","Env. GMM model"], ...
+plotDampingByEventType(allStats, ...
     initialDirection="Z", ...
-    frequencyFocus='target', ...
-    limits=limits,...
+    frequencyFocus="target", ...
+    limits=limits, ...
     numBins=100, ...
-    figureFolder=figureFolder);
+    figureFolder=figureFolder, ...
+    redFlagField="flag_PSDTotal", ...
+    blueFlagField="flag_PSDTotal_inGmm", ...
+    yAxisScale="log", ...
+    xAxisScale="log");
 
-DampingSensitivityTesting(datetime(2020,02,22,01,20,00),...
-                          datetime(2020,02,22,01,30,00),...
-                          nffts=2.^(8:20),...
-                          printTimes=true)
+% DampingSensitivityTesting(datetime(2020,02,22,01,20,00),...
+%                           datetime(2020,02,22,01,30,00),...
+%                           nffts=2.^(8:20),...
+%                           printTimes=true)
 
+plotFlags = ["flag_PSD_Any4Points","flag_C1Rwiv_WideTol_LowCableDamping","flag_C5Rwiv_AllSensors","flag_C5Rwiv_AllSensors_LowDamping"];
+flagNames = ["PSD ($\geq$ 4 Peaks Any Dir.)","C1 RWIV ($\pm$0.2 Hz, Cable $\zeta<1.5\%$)","C5 RWIV (All Sensors)","C5 RWIV (All Sensors + $\zeta<0.5\%$)"];
+allStats = plotNidComparison(allStats, plotFlags, limits, 'local', figureFolder, flagNames, false, 10, 1);
+
+%% Flag optimization
+runOvernightOptimization = true;
+if runOvernightOptimization
+    cableConfig = struct();
+    cableConfig.name = "C1";
+    cableConfig.modeFreqs = [1.03, 2.08, 3.10, 4.15, 5.13, 6.16, 7.32, 8.30, 9.30];
+    [overnightResult, allStats] = runOvernightCableRwivOptimization(allStats, cableConfig, struct( ...
+        'optimizerList', ["surrogateopt", "patternsearch", "multistart-fmincon", "fmincon"], ...
+        'seedList', [112, 221, 337], ...
+        'maxFunctionEvaluationsList', [1500, 3000, 6000], ...
+        'maxTimePerRun', minutes(40), ...
+        'lookbackDuration', hours(1), ...
+        'dryRainThreshold', 0, ...
+        'lambdaDryList', [5, 10, 20], ...
+        'lambdaDrySqList', [20, 50, 100], ...
+        'enforceZeroDry', false, ...
+        'runPrallel', true, ...
+        'numWorkers', 4, ...
+        'display', "off", ...
+        'verbose', true, ...
+        'showProgressPlot', true, ...
+        'progressUpdateEvery', 1, ...
+        'useInitialGuess', true, ...
+        'initialFlagField', "flag_PSDTotal", ...
+        'initialGuessFreqTolerance', 0.15, ...
+        'initialGuessIntensityQuantile', 0.2, ...
+        'initialGuessDampingQuantile', 0.8, ...
+        'initialGuessMinDirectionsRequired', 1, ...
+        'initialGuessMinPeaksPerDirection', 2, ...
+        'minWetSamplesList', [25, 50, 100], ...
+        'saveBestFlagName', "flag_C1Rwiv_OvernightBest"));
+end
+
+plotFlags = ["flag_PSD_Any4Points","flag_C1Rwiv_OvernightBest","flag_C5Rwiv_AllSensors","flag_C5Rwiv_AllSensors_LowDamping"];
+flagNames = ["PSD ($\geq$ 4 Peaks Any Dir.)","C1 RWIV optimized","C5 RWIV (All Sensors)","C5 RWIV (All Sensors + $\zeta<0.5\%$)"];
+allStats = plotNidComparison(allStats, plotFlags, limits, 'local', figureFolder, flagNames, false, 10, 1);
+%% Machine learning approaches
 %Isolation forrest
 [allStats, Mdl, info] = detectOutliersIForest(allStats);
 plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='iforestIsAnomaly',plotBackground=false,plotAllDirections=false,plotDamping=false,plotBluePoints=false)
@@ -97,8 +146,24 @@ plotTsneData(allStats, ...
     weatherFlag='flag_PSDTotal_inGmm', ...
     figureFolder=figureFolder);
 
+% Umap
+pyenv(Version='/home/carl/OneDrive/Documents/PhD_Stavanger/ByBrua/Analysis/.venv/bin/python',...
+    ExecutionMode="OutOfProcess");
+pe = pyenv;
 
-
+plotTsneData(allStats, ...
+    startDate=datetime(2020,01,01), ...
+    endDate=datetime(2020,08,01), ...
+    featureGroup='accelerometer', ...
+    method='umap', ...
+    umapNNeighbors=15, ...
+    umapMinDist=0.1, ...
+    umapNComponents=2, ...
+    umapMetric='euclidean', ...
+    rngSeed=42, ...
+    rwivFlag='flag_PSD_Any4Points', ...
+    weatherFlag='flag_PSDTotal_inGmm', ...
+    figureFolder=figureFolder);
 %% OLD SHIT
 % plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder,flagNames(1:4),false,10,1);
 % plotNidComparison(allStats,plotFlags,limits,'global',figureFolder);
@@ -189,9 +254,19 @@ function statsTable = applyAnalysisFlags(statsTable, thresholds)
 
     psdFlags = extractPsdFlags(statsTable, thresholds.targetFreqs, thresholds.freqTolerance);
     [flagAny3Points, flagAny4Points] = calculateDirectionalFlags(psdFlags);
+    flagC1RwivWideTolLowCableDamping = calculateC1RwivFlag(statsTable, thresholds.c1RwivTargetFreq, ...
+        thresholds.c1RwivFreqTolerance, thresholds.c1CableDampingMax);
+    [flagC5RwivAllSensors, flagC5RwivAllSensorsLowDamping] = calculateC5RwivFlags( ...
+        statsTable, thresholds.c5RwivTargetFreqs, thresholds.freqTolerance, thresholds.c5RwivDampingMax);
+    [flagC5RwivAny4PointsWithC1Mode, ~] = calculateC5RwivFlags( ...
+        statsTable, thresholds.c5RwivTargetFreqsWithC1Mode, thresholds.freqTolerance, thresholds.c5RwivDampingMax);
     
     statsTable.flag_PSD_Any3Points = flagAny3Points;
     statsTable.flag_PSD_Any4Points = flagAny4Points;
+    statsTable.flag_C1Rwiv_WideTol_LowCableDamping = flagC1RwivWideTolLowCableDamping;
+    statsTable.flag_C5Rwiv_AllSensors = flagC5RwivAllSensors;
+    statsTable.flag_C5Rwiv_AllSensors_LowDamping = flagC5RwivAllSensorsLowDamping;
+    statsTable.flag_C5Rwiv_Any4Points_WithC1Mode = flagC5RwivAny4PointsWithC1Mode;
 
     statsTable.flag_PSD_Conc_F1 = psdFlags.Conc_Z.mode1;
     statsTable.flag_PSD_Conc_F2 = psdFlags.Conc_Z.mode2;
@@ -239,6 +314,86 @@ function statsTable = applyAnalysisFlags(statsTable, thresholds)
     statsTable.flag_StructuralResponseMatch = statsTable.flag_PSDTotal & statsTable.flag_CohTotal;
     statsTable.flag_EnvironmentalMatch = statsTable.flag_WindSpd & statsTable.flag_WindAng & statsTable.flag_Rain;
     statsTable.flag_allFlags = statsTable.flag_StructuralResponseMatch & statsTable.flag_EnvironmentalMatch;
+end
+
+function flagC1Rwiv = calculateC1RwivFlag(statsTable, targetFreq, tolerance, cableDampingMax)
+    % calculateC1RwivFlag evaluates C1 RWIV from Conc_Z and Steel_Z peaks with a cable damping constraint.
+    numSegments = height(statsTable);
+    flagC1Rwiv = false(numSegments, 1);
+
+    for i = 1:numSegments
+        [hasConcPeak, ~] = hasPeakMatch(statsTable.psdPeaks(i), 'Conc_Z', targetFreq, tolerance);
+        [hasSteelPeak, hasSteelLowDamping] = hasPeakMatch(statsTable.psdPeaks(i), 'Steel_Z', targetFreq, tolerance, cableDampingMax);
+        flagC1Rwiv(i) = hasConcPeak && hasSteelPeak && hasSteelLowDamping;
+    end
+end
+
+function [flagAllSensors, flagAllSensorsLowDamping] = calculateC5RwivFlags(statsTable, targetFreqs, tolerance, dampingMax)
+    % calculateC5RwivFlags evaluates C5 RWIV as >=4 matched peaks in any direction with optional damping criterion.
+    directions = ["X", "Y", "Z"];
+    minPeaksPerDirection = 4;
+    numSegments = height(statsTable);
+
+    flagAllSensors = false(numSegments, 1);
+    flagAllSensorsLowDamping = false(numSegments, 1);
+
+    for i = 1:numSegments
+        hasAnyDirectionWithFourPeaks = false;
+        hasAnyDirectionWithFourPeaksAndLowDamping = false;
+
+        for direction = directions
+            sensorNames = ["Conc_" + direction, "Steel_" + direction];
+            directionPeakCount = 0;
+            directionLowDampingPeakCount = 0;
+
+            for sensorName = sensorNames
+                for targetFreq = targetFreqs
+                    [hasMatchedPeak, hasMatchedLowDamping] = hasPeakMatch(statsTable.psdPeaks(i), char(sensorName), targetFreq, tolerance, dampingMax);
+                    directionPeakCount = directionPeakCount + hasMatchedPeak;
+                    directionLowDampingPeakCount = directionLowDampingPeakCount + hasMatchedLowDamping;
+                end
+            end
+
+            hasFourPeaksInDirection = directionPeakCount >= minPeaksPerDirection;
+            hasFourLowDampingPeaksInDirection = directionLowDampingPeakCount >= minPeaksPerDirection;
+
+            hasAnyDirectionWithFourPeaks = hasAnyDirectionWithFourPeaks || hasFourPeaksInDirection;
+            hasAnyDirectionWithFourPeaksAndLowDamping = hasAnyDirectionWithFourPeaksAndLowDamping || ...
+                (hasFourPeaksInDirection && hasFourLowDampingPeaksInDirection);
+        end
+
+        flagAllSensors(i) = hasAnyDirectionWithFourPeaks;
+        flagAllSensorsLowDamping(i) = hasAnyDirectionWithFourPeaksAndLowDamping;
+    end
+end
+
+function [hasMatchedPeak, hasMatchedLowDamping] = hasPeakMatch(psdPeakRow, sensorName, targetFreq, tolerance, dampingMax)
+    % hasPeakMatch checks whether a sensor has any peak in a target band and optionally low damping among matched peaks.
+    hasMatchedPeak = false;
+    hasMatchedLowDamping = false;
+
+    if ~isfield(psdPeakRow, sensorName)
+        return;
+    end
+
+    sensorData = psdPeakRow.(sensorName);
+    if ~isfield(sensorData, 'locations')
+        return;
+    end
+
+    peakLocations = sensorData.locations(:);
+    matchedPeakIdx = abs(peakLocations - targetFreq) <= tolerance;
+    hasMatchedPeak = any(matchedPeakIdx);
+
+    if nargin < 5 || ~hasMatchedPeak || ~isfield(sensorData, 'dampingRatios')
+        return;
+    end
+
+    dampingRatios = sensorData.dampingRatios(:);
+    comparableCount = min(numel(peakLocations), numel(dampingRatios));
+    comparableMatchedIdx = matchedPeakIdx(1:comparableCount);
+    comparableDamping = dampingRatios(1:comparableCount);
+    hasMatchedLowDamping = any(comparableDamping(comparableMatchedIdx) < dampingMax);
 end
 
 function psdFlags = extractPsdFlags(statsTable, targetFreqs, tolerance)

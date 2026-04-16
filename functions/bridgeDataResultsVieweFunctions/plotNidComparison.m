@@ -19,14 +19,7 @@ else
     flagNames = cellstr(flagNames);
 end
 
-if strcmpi(windDomain, 'local')
-    allWindSpeed = [allStats.WindSpeed.mean]';
-    allWindAngle = [allStats.PhiC1.mean]';
-else
-    allWindSpeed = [allStats.WindSpeed.mean]';
-    allWindAngle = [allStats.WindDir.mean]';
-end
-allData = [allWindAngle, allWindSpeed];
+allWindSpeed = [allStats.WindSpeed.mean]';
 
 fig = createFigure(1, 'RWIV Multi-Criteria Validation');
 tlo = tiledlayout('flow', 'TileSpacing', 'compact', 'Padding', 'tight');
@@ -37,6 +30,7 @@ for i = 1:length(flagFields)
     nexttile;
     currentFlag = flagFields{i};
     flagName = flagNames{i};
+    isC5Case = contains(string(currentFlag), "C5", 'IgnoreCase', true) || contains(string(flagName), "C5", 'IgnoreCase', true);
     
     rain = calculateLookbackRain(currentFlag, allStats, hours(2));
     events = allStats(allStats.(currentFlag), :);
@@ -46,11 +40,19 @@ for i = 1:length(flagFields)
     
     if strcmpi(windDomain, 'local')
         windSpeed = [events.WindSpeed.mean]';
-        windAngle = [events.PhiC1.mean]';
+        if isC5Case
+            windAngle = calculateLocalCableWindAngle([events.WindDir.mean]', 51.48, 360);
+            allWindAngle = calculateLocalCableWindAngle([allStats.WindDir.mean]', 51.48, 360);
+        else
+            windAngle = [events.PhiC1.mean]';
+            allWindAngle = [allStats.PhiC1.mean]';
+        end
     else
         windSpeed = [events.WindSpeed.mean]';
         windAngle = [events.WindDir.mean]';
+        allWindAngle = [allStats.WindDir.mean]';
     end
+    allData = [allWindAngle, allWindSpeed];
     
     acc = [events.Steel_Z.max];
     accSize = 50 / mean(acc) * acc;
@@ -291,4 +293,11 @@ endTime = eventInfo.durations(bestIdx, 2);
 fprintf('Selected event at %.2f deg, %.2f m/s (rain: %.2f mm/h, acc: %.3f)\n', ...
     bestScatter.XData(bestIdx), bestScatter.YData(bestIdx), eventInfo.rain(bestIdx), eventInfo.acceleration(bestIdx));
 inspectDayResponse(startTime, endTime, "freqMethod", "burg");
+end
+
+function cableWindAngle = calculateLocalCableWindAngle(windAzimuth, inclinationAngle, bridgeAzimuth)
+% Converts global wind azimuth to local cable wind angle.
+yawAngle = windAzimuth - bridgeAzimuth;
+yawAngle = mod(yawAngle + 180, 360);
+cableWindAngle = acosd(cosd(inclinationAngle) .* cosd(yawAngle));
 end

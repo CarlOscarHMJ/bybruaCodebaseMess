@@ -1,8 +1,8 @@
 function plotTsneData(allStats, options)
-    % plotTsneData Visualizes high-dimensional bridge data using dimensionality reduction (t-SNE/PCA).
+    % plotTsneData Visualizes high-dimensional bridge data using dimensionality reduction (t-SNE/PCA/UMAP).
     %
     % Description:
-    %   Projects bridge monitoring data into 2D space using t-SNE or PCA.
+    %   Projects bridge monitoring data into 2D space using t-SNE, PCA, or UMAP.
     %   Supports multiple feature groups and highlights flagged events.
     %
     % Arguments:
@@ -10,10 +10,15 @@ function plotTsneData(allStats, options)
     %
     % Options (name-value pairs):
     %   featureGroup     - Feature set: "all", "accelerometer", "environmental" (default: "all")
-    %   method          - Dimensionality reduction: "tsne", "pca" (default: "tsne")
+    %   method          - Dimensionality reduction: "tsne", "pca", "umap" (default: "tsne")
     %   tsnePerplexity  - t-SNE perplexity parameter (default: 30)
     %   tsneLearningRate - t-SNE learning rate (default: 'auto')
     %   tsneMaxIter    - t-SNE maximum iterations (default: 1000)
+    %   umapNNeighbors - UMAP nearest neighbors (default: 15)
+    %   umapMinDist    - UMAP minimum embedding distance (default: 0.1)
+    %   umapNComponents - UMAP output dimensions (default: 2)
+    %   umapMetric     - UMAP distance metric (default: "euclidean")
+    %   umapVerbose    - UMAP verbosity flag (default: false)
     %   pcaComponents  - Number of PCA components to retain (default: 2)
     %   rwivFlag       - Field name for structural RWIV flag (default: 'flag_StructuralResponseMatch')
     %   weatherFlag    - Field name for critical weather flag (default: 'flag_EnvironmentalMatch')
@@ -38,6 +43,11 @@ function plotTsneData(allStats, options)
         options.tsnePerplexity {mustBePositive} = 30
         options.tsneLearningRate = 'auto'
         options.tsneMaxIter {mustBePositive} = 1000
+        options.umapNNeighbors {mustBePositive} = 15
+        options.umapMinDist {mustBeNonnegative} = 0.1
+        options.umapNComponents {mustBePositive} = 2
+        options.umapMetric string = "euclidean"
+        options.umapVerbose logical = false
         options.pcaComponents {mustBePositive} = 2
         options.rwivFlag string = 'flag_StructuralResponseMatch'
         options.weatherFlag string = 'flag_EnvironmentalMatch'
@@ -110,8 +120,36 @@ function plotTsneData(allStats, options)
         case 'pca'
             [coeff, ~, ~] = pca(featuresPlot);
             Y = featuresPlot * coeff(:, 1:options.pcaComponents);
+        case 'umap'
+            try
+                np = py.importlib.import_module('numpy');
+                umapModule = py.importlib.import_module('umap');
+            catch ME
+                error(['UMAP Python module not available. Configure MATLAB Python environment with pyenv and install ' ...
+                       'umap-learn (pip install umap-learn). Original error: %s'], ME.message);
+            end
+
+            try
+                reducer = umapModule.UMAP(pyargs( ...
+                    'n_neighbors', int32(options.umapNNeighbors), ...
+                    'min_dist', options.umapMinDist, ...
+                    'n_components', int32(options.umapNComponents), ...
+                    'metric', char(options.umapMetric), ...
+                    'random_state', int32(options.rngSeed), ...
+                    'n_jobs', int32(1), ...
+                    'verbose', options.umapVerbose));
+
+                Ypy = reducer.fit_transform(np.asarray(featuresPlot));
+                Y = convertPythonEmbeddingToDouble(Ypy);
+            catch ME
+                error('UMAP execution failed via Python bridge: %s', ME.message);
+            end
         otherwise
-            error('Unknown method: %s. Use "tsne" or "pca".', options.method);
+            error('Unknown method: %s. Use "tsne", "pca", or "umap".', options.method);
+    end
+
+    if size(Y, 2) < 2
+        error('%s produced fewer than 2 dimensions; unable to create 2D scatter plot.', upper(options.method));
     end
     
     rwivFlagData = false(height(allStats), 1);
@@ -189,9 +227,26 @@ function plotTsneData(allStats, options)
     set(gca, 'TickLabelInterpreter', 'latex');
     
     if strlength(options.figureFolder) > 0
-        saveName = sprintf('Tsne_%s_%s', options.featureGroup, options.method);
+        saveName = sprintf('Embedding_%s_%s', options.featureGroup, options.method);
         saveFig(figHandle, options.figureFolder, saveName, 2, 1);
     end
+end
+
+
+function Y = convertPythonEmbeddingToDouble(pyEmbedding)
+    np = py.importlib.import_module('numpy');
+    pyArray = np.asarray(pyEmbedding, pyargs('dtype', np.float64));
+
+    nDims = int64(py.len(pyArray.shape));
+    if nDims ~= 2
+        error('Expected a 2D embedding array from Python UMAP, got %dD.', nDims);
+    end
+
+    nRows = int64(pyArray.shape{1});
+    nCols = int64(pyArray.shape{2});
+
+    flatData = double(pyArray.flatten().tolist());
+    Y = reshape(flatData, [nCols, nRows]).';
 end
 
 

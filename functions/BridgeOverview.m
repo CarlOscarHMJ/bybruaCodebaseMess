@@ -496,7 +496,7 @@ classdef BridgeOverview
                 opts.fMax (1,1) double = 10
                 opts.windowSec (1,1) double = 60
                 opts.overlapPct (1,1) double = 50
-                opts.nfft (1,1) double = 256
+                opts.nfft (1,1) double = 2^15
                 opts.stftWindowSec (1,1) double = 20
                 opts.coherenceType (1,1) string {mustBeMember(opts.coherenceType, ["wavelet", "normal"])} = "normal"
                 opts.freqMethod (1,1) string {mustBeMember(opts.freqMethod, ["welch", "burg", "stft"])} = "welch"

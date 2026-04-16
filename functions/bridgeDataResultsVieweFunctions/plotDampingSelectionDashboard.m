@@ -6,6 +6,7 @@ arguments
     selectionInfo struct
     options.windContext (1,1) string {mustBeMember(options.windContext, ["global", "local"])} = "global"
     options.topCount (1,1) double {mustBeInteger, mustBePositive} = 8
+    options.enablePointInspect (1,1) logical = true
 end
 
 if isempty(selectedPeaks)
@@ -18,12 +19,20 @@ tlo = tiledlayout(fig, 2, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
 
 ax1 = nexttile(tlo, 1);
 hold(ax1, 'on');
-scatter(ax1, selectedPeaks.frequency, selectedPeaks.damping, 28, selectedPeaks.windSpeed, ...
+scatterHandle = scatter(ax1, selectedPeaks.frequency, selectedPeaks.damping, 28, selectedPeaks.windSpeed, ...
     'filled', 'MarkerFaceAlpha', 0.7, 'MarkerEdgeColor', 'none');
+set(scatterHandle, 'PickableParts', 'all', 'HitTest', 'on');
+if options.enablePointInspect
+    set(scatterHandle, 'ButtonDownFcn', @iOnScatterPointClick);
+end
 grid(ax1, 'on'); box(ax1, 'on');
 xlabel(ax1, 'Frequency (Hz)', 'Interpreter', 'latex');
 ylabel(ax1, 'Damping $\zeta$', 'Interpreter', 'latex');
-title(ax1, 'Frequency vs damping', 'Interpreter', 'latex');
+if options.enablePointInspect
+    title(ax1, 'Frequency vs damping (click point for RWIV dashboard)', 'Interpreter', 'latex');
+else
+    title(ax1, 'Frequency vs damping', 'Interpreter', 'latex');
+end
 set(ax1, 'TickLabelInterpreter', 'latex');
 cb = colorbar(ax1);
 cb.Label.String = 'Wind speed (m/s)';
@@ -96,4 +105,44 @@ end
 header = sprintf('Damping Selection Dashboard | Flag: %s | Direction: %s | Range: [%.4f, %.4f] | Peaks: %d', ...
     char(flagLabel), char(selectionInfo.direction), selectionInfo.dampingMin, selectionInfo.dampingMax, height(selectedPeaks));
 title(tlo, header, 'Interpreter', 'none');
+
+    function iOnScatterPointClick(~, event)
+        dataIndex = iResolvePointIndex(event);
+        if ~isfinite(dataIndex) || dataIndex < 1 || dataIndex > height(selectedPeaks)
+            warning('Could not resolve selected point index.');
+            return;
+        end
+
+        segmentStart = selectedPeaks.startTime(dataIndex);
+        segmentEnd = selectedPeaks.endTime(dataIndex);
+        sensorLabel = string(selectedPeaks.sensor(dataIndex));
+        sensorPrefix = iResolveSensorPrefix(sensorLabel);
+        fprintf('[plotDampingSelectionDashboard] Opening RWIV dashboard for segment %d (%s to %s), sensor %s.\n', ...
+            selectedPeaks.segmentIndex(dataIndex), datestr(segmentStart, 'yyyy-mm-dd HH:MM'), datestr(segmentEnd, 'yyyy-mm-dd HH:MM'), char(sensorPrefix));
+
+        try
+            inspectDayResponse(segmentStart, segmentEnd, sensor=sensorPrefix,freqMethod="burg");
+        catch executionError
+            warning('Failed to open RWIV dashboard for selected point: %s', executionError.message);
+        end
+    end
+
+    function dataIndex = iResolvePointIndex(event)
+        dataIndex = NaN;
+        if isprop(event, 'DataIndex')
+            dataIndex = double(event.DataIndex);
+        elseif isprop(event, 'IntersectionPoint')
+            clickPoint = event.IntersectionPoint;
+            pointDistances = hypot(selectedPeaks.frequency - clickPoint(1), selectedPeaks.damping - clickPoint(2));
+            [~, dataIndex] = min(pointDistances);
+        end
+    end
+
+    function sensorPrefix = iResolveSensorPrefix(sensorLabel)
+        if startsWith(sensorLabel, "Steel")
+            sensorPrefix = "Steel";
+        else
+            sensorPrefix = "Conc";
+        end
+    end
 end

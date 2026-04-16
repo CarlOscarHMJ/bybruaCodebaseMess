@@ -1,27 +1,33 @@
-function plotWindRoses(allStats,figureFolder,minWindSpeed,binWindSize,maxWindSpeed)
+function plotWindRoses(allStats,figureFolder,options)
 arguments
     allStats 
     figureFolder {mustBeText}
-    minWindSpeed = 6;
-    binWindSize = 3;
-    maxWindSpeed = 22;
+    options.minWindSpeed (1,1) double = 6
+    options.binWindSize (1,1) double = 3
+    options.maxWindSpeed (1,1) double = 22
+    options.stationarityLimit (1,1) double = inf
 end
 
 windSpeeds = [allStats.WindSpeed.mean];
 windAngle = [allStats.WindDir.mean];
+windStationarity = [allStats.WindSpeed.stationarityValue];
 
 fig = createFigure(11, 'Wind Roses');
 tlc = tiledlayout('flow','TileSpacing','compact','Padding','compact');
 nt = nexttile;
 
-idx = windSpeeds >= minWindSpeed;
+idx = windSpeeds >= options.minWindSpeed;
+if isfinite(options.stationarityLimit)
+    idx = idx & ~isnan(windStationarity) & (windStationarity <= options.stationarityLimit);
+end
+
 filteredWindSpeeds = windSpeeds(idx);
 filteredAngles = windAngle(idx) - 18;
 
 labels = cellstr(compose("$%d^\\circ$", 0:30:330));
 labels{1} = 'N'; labels{4} = '$\;$E'; labels{7} = 'S'; labels{10} = 'W';
 
-speedBins = minWindSpeed:binWindSize:maxWindSpeed;
+speedBins = options.minWindSpeed:options.binWindSize:options.maxWindSpeed;
 WindRose(filteredAngles, filteredWindSpeeds, ...
     'axes', nt, ...
     'vWinds', speedBins, ...

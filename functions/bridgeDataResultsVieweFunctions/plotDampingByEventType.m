@@ -1,17 +1,5 @@
 function plotDampingByEventType(allStats, options)
-% plotDampingByEventType Plots overlapping damping histograms categorized by event type.
-%
-% Description:
-%   Creates a single plot with three overlapping histograms showing:
-%   - Gray (back): background data not matching any event flag
-%   - Blue (middle): data matching blueFlagField
-%   - Red (front): data matching redFlagField
-%   Default direction is Z. Keyboard shortcuts: X/Y/Z for direction, L for log/linear, +/- for bins, S to save.
-%
-% Arguments:
-%   allStats       - Table with psdPeaks and flag fields
-%   options.redFlagField   - Field name for red histogram (default: 'flag_StructuralResponseMatch')
-%   options.blueFlagField  - Field name for blue histogram (default: 'flag_EnvironmentalMatch')
+% plotDampingByEventType Plots overlapping damping histograms by event type for all sensor directions.
 
 arguments
     allStats table
@@ -26,261 +14,451 @@ arguments
     options.showMedianLine (1,1) logical = true
     options.showBoxStats (1,1) logical = true
     options.showCdf (1,1) logical = true
+    options.verboseClicks (1,1) logical = true
     options.xAxisScale (1,1) string {mustBeMember(options.xAxisScale, ["linear", "log"])} = "linear"
+    options.yAxisScale (1,1) string {mustBeMember(options.yAxisScale, ["linear", "log"])} = "linear"
     options.redFlagField string = 'flag_StructuralResponseMatch'
     options.blueFlagField string = 'flag_EnvironmentalMatch'
 end
 
 targetFreqs = iResolveTargetFreqs(options);
 freqTolerance = iResolveTolerance(options);
+sensorPrefixes = ["Conc", "Steel"];
 directions = ["X", "Y", "Z"];
-initialDirection = upper(string(options.initialDirection));
-if ~any(initialDirection == directions)
-    error('initialDirection must be X, Y, or Z.');
+
+dampingBySensorDirection = struct();
+for sensorPrefix = sensorPrefixes
+    dampingBySensorDirection.(char(sensorPrefix)) = struct();
+    for direction = directions
+        sensorName = sensorPrefix + "_" + direction;
+        dampingBySensorDirection.(char(sensorPrefix)).(char(direction)) = iCollectSensorDirectionData(allStats, sensorName, options.frequencyFocus, targetFreqs, freqTolerance, options.redFlagField, options.blueFlagField);
+    end
 end
 
-dampingByDirection = struct();
-for direction = directions
-    dampingByDirection.(char(direction)) = iCollectDirectionData(allStats, direction, options.frequencyFocus, targetFreqs, freqTolerance, options.redFlagField, options.blueFlagField);
-end
-
-globalMinPositiveDamping = iGetGlobalMinPositiveDamping(dampingByDirection, directions);
+globalMinPositiveDamping = iGetGlobalMinPositiveDamping(dampingBySensorDirection, sensorPrefixes, directions);
 xLowerLog = max(globalMinPositiveDamping, 1e-4);
 
 fig = createFigure(101, 'DampingHistogram');
-currentDirection = initialDirection;
 currentXAxisScale = lower(options.xAxisScale);
 currentNumBins = options.numBins;
+selectedPanelIdx = NaN;
+selectedRedBinIdx = NaN;
 
 set(fig, 'KeyPressFcn', @iOnKeyPress, 'WindowButtonDownFcn', @iOnMouseClick);
 iRender();
 
     function iOnKeyPress(~, event)
-        if any(strcmp(event.Key, {'x', 'y', 'z'}))
-            currentDirection = upper(string(event.Key));
-            iRender();
-        elseif strcmp(event.Key, 'l')
+        if strcmp(event.Key, 'l')
             if currentXAxisScale == "linear"
                 currentXAxisScale = "log";
             else
                 currentXAxisScale = "linear";
             end
+            iPrintVerbose('[plotDampingByEventType] Key %s: x-axis scale -> %s.', event.Key, char(currentXAxisScale));
             iRender();
         elseif iIsIncreaseBins(event)
             currentNumBins = currentNumBins + 10;
+            iPrintVerbose('[plotDampingByEventType] Key %s: bins -> %d.', event.Key, currentNumBins);
             iRender();
         elseif iIsDecreaseBins(event)
             currentNumBins = max(5, currentNumBins - 10);
+            iPrintVerbose('[plotDampingByEventType] Key %s: bins -> %d.', event.Key, currentNumBins);
             iRender();
         elseif strcmp(event.Key, 'd')
+            iPrintVerbose('[plotDampingByEventType] Key %s: open dashboard.', event.Key);
             iOpenDashboard();
         elseif strcmp(event.Key, 's')
+            iPrintVerbose('[plotDampingByEventType] Key %s: save figure.', event.Key);
             iSaveCurrentFigure();
         end
     end
 
     function iOnMouseClick(~, ~)
+        if ~strcmp(get(fig, 'SelectionType'), 'alt')
+            return;
+        end
+        iPrintVerbose('[plotDampingByEventType] Right-click detected.');
+        if ~isappdata(fig, 'HistogramContext')
+            iPrintVerbose('[plotDampingByEventType] Click ignored: no histogram context available yet.');
+            return;
+        end
+
+        histogramContext = getappdata(fig, 'HistogramContext');
+        clickedObject = hittest(fig);
+        if isempty(clickedObject) || ~isgraphics(clickedObject)
+            iPrintVerbose('[plotDampingByEventType] Click ignored: no graphics object selected.');
+            return;
+        end
+
+        clickedAxis = ancestor(clickedObject, 'axes');
+        if isempty(clickedAxis)
+            iPrintVerbose('[plotDampingByEventType] Click ignored: target is outside damping axes.');
+            return;
+        end
+
+        panelIdx = find(histogramContext.axesHandles == clickedAxis, 1, 'first');
+        if isempty(panelIdx)
+            iPrintVerbose('[plotDampingByEventType] Click ignored: target is outside damping axes.');
+            return;
+        end
+
+        clickedX = clickedAxis.CurrentPoint(1, 1);
+        clickedBinIdx = iGetBinIndex(clickedX, histogramContext.sharedBinEdges);
+        redBinCounts = histogramContext.panelData(panelIdx).redBinCounts;
+        if clickedBinIdx < 1 || clickedBinIdx > numel(redBinCounts)
+            iPrintVerbose('[plotDampingByEventType] Click ignored: selected bin is out of range.');
+            return;
+        end
+        if redBinCounts(clickedBinIdx) <= 0
+            selectedLeft = histogramContext.sharedBinEdges(clickedBinIdx);
+            selectedRight = histogramContext.sharedBinEdges(clickedBinIdx + 1);
+            iPrintVerbose('[plotDampingByEventType] Bin [%.5f, %.5f] has no red events.', selectedLeft, selectedRight);
+            return;
+        end
+
+        selectedLeft = histogramContext.sharedBinEdges(clickedBinIdx);
+        selectedRight = histogramContext.sharedBinEdges(clickedBinIdx + 1);
+        panelData = histogramContext.panelData(panelIdx);
+        iPrintVerbose('[plotDampingByEventType] Red bin selected for %s %s: [%0.5f, %0.5f], count=%d.', ...
+            panelData.sensorPrefix, panelData.direction, selectedLeft, selectedRight, redBinCounts(clickedBinIdx));
+
+        selectedPanelIdx = panelIdx;
+        selectedRedBinIdx = clickedBinIdx;
+        iRender();
+        iOpenDashboard(clickedBinIdx, panelIdx);
     end
 
     function iRender()
         clf(fig);
-        ax = axes(fig);
-        hold(ax, 'on');
-        grid(ax, 'on');
-        box(ax, 'on');
+        tlo = tiledlayout(fig, 2, 3, 'TileSpacing', 'compact', 'Padding', 'compact');
 
-        currentData = dampingByDirection.(char(currentDirection));
-        grayValues = currentData.gray;
-        blueValues = currentData.blue;
-        redValues = currentData.red;
-        
-        currentMaxDamping = max(iGetStructMax(grayValues), iGetStructMax(blueValues), iGetStructMax(redValues));
-        if ~isfinite(currentMaxDamping) || currentMaxDamping <= 0
-            currentMaxDamping = 0.2;
+        colorGray = [0.6 0.6 0.6];
+        edgeGray = [0.4 0.4 0.4];
+        colorBlue = [0.2 0.4 0.8];
+        edgeBlue = [0.1 0.2 0.5];
+        colorRed = [0.8 0.2 0.2];
+        edgeRed = [0.4 0.1 0.1];
+
+        globalMaxDamping = iGetGlobalMaxDamping(dampingBySensorDirection, sensorPrefixes, directions);
+        if ~isfinite(globalMaxDamping) || globalMaxDamping <= 0
+            globalMaxDamping = 0.2;
         end
 
         if currentXAxisScale == "linear"
-            sharedBinEdges = linspace(0, currentMaxDamping, currentNumBins + 1);
+            sharedBinEdges = linspace(0, globalMaxDamping, currentNumBins + 1);
             xUpperLinear = sharedBinEdges(end);
             xUpperLog = NaN;
         else
-            xUpperLog = max(currentMaxDamping, xLowerLog * 10);
+            xUpperLog = max(globalMaxDamping, xLowerLog * 10);
             sharedBinEdges = logspace(log10(xLowerLog), log10(xUpperLog), currentNumBins + 1);
             xUpperLinear = NaN;
         end
 
-        if currentXAxisScale == "log"
-            set(ax, 'XScale', 'log');
-        else
-            set(ax, 'XScale', 'linear');
-        end
+        panelCount = numel(sensorPrefixes) * numel(directions);
+        axesHandles = gobjects(1, panelCount);
+        panelData = repmat(struct('sensorPrefix', '', 'sensorName', '', 'direction', '', 'redBinCounts', []), 1, panelCount);
 
-        hGray = [];
-        hBlue = [];
-        hRed = [];
-        
-        if ~isempty(grayValues)
-            yyaxis(ax, 'left');
-            hGray = histogram(ax, grayValues, sharedBinEdges, 'Normalization', char(options.normalization), ...
-                'FaceColor', [0.6 0.6 0.6], 'EdgeColor', [0.4 0.4 0.4], 'LineWidth', 0.6, 'FaceAlpha', 0.5);
-        end
-        
-        if ~isempty(blueValues)
-            yyaxis(ax, 'left');
-            hBlue = histogram(ax, blueValues, sharedBinEdges, 'Normalization', char(options.normalization), ...
-                'FaceColor', [0.2 0.4 0.8], 'EdgeColor', [0.1 0.2 0.5], 'LineWidth', 0.6, 'FaceAlpha', 0.7);
-        end
-        
-        if ~isempty(redValues)
-            yyaxis(ax, 'left');
-            hRed = histogram(ax, redValues, sharedBinEdges, 'Normalization', char(options.normalization), ...
-                'FaceColor', [0.8 0.2 0.2], 'EdgeColor', [0.4 0.1 0.1], 'LineWidth', 0.6, 'FaceAlpha', 0.8);
-        end
+        panelIdx = 0;
+        for sensorIdx = 1:numel(sensorPrefixes)
+            for directionIdx = 1:numel(directions)
+                panelIdx = panelIdx + 1;
+                sensorPrefix = sensorPrefixes(sensorIdx);
+                direction = directions(directionIdx);
+                sensorName = sensorPrefix + "_" + direction;
+                currentData = dampingBySensorDirection.(char(sensorPrefix)).(char(direction));
 
-        if ~isempty(hGray) && ~isempty(hBlue)
-            uistack(hGray, 'bottom');
-            uistack(hBlue, 'up');
-            if ~isempty(hRed)
-                uistack(hRed, 'top');
+                ax = nexttile(tlo, panelIdx);
+                axesHandles(panelIdx) = ax;
+                hold(ax, 'on');
+                grid(ax, 'on');
+                box(ax, 'on');
+
+                if currentXAxisScale == "log"
+                    set(ax, 'XScale', 'log');
+                else
+                    set(ax, 'XScale', 'linear');
+                end
+                set(ax, 'YScale', options.yAxisScale);
+
+                hGray = [];
+                hBlue = [];
+                hRed = [];
+
+                if ~isempty(currentData.gray)
+                    yyaxis(ax, 'left');
+                    hGray = histogram(ax, currentData.gray, sharedBinEdges, 'Normalization', char(options.normalization), ...
+                        'FaceColor', colorGray, 'EdgeColor', edgeGray, 'LineWidth', 0.6, 'FaceAlpha', 0.5);
+                end
+                if ~isempty(currentData.blue)
+                    yyaxis(ax, 'left');
+                    hBlue = histogram(ax, currentData.blue, sharedBinEdges, 'Normalization', char(options.normalization), ...
+                        'FaceColor', colorBlue, 'EdgeColor', edgeBlue, 'LineWidth', 0.6, 'FaceAlpha', 0.7);
+                end
+                if ~isempty(currentData.red)
+                    yyaxis(ax, 'left');
+                    hRed = histogram(ax, currentData.red, sharedBinEdges, 'Normalization', char(options.normalization), ...
+                        'FaceColor', colorRed, 'EdgeColor', edgeRed, 'LineWidth', 0.6, 'FaceAlpha', 0.8);
+                end
+
+                if ~isempty(hGray) && ~isempty(hBlue)
+                    uistack(hGray, 'bottom');
+                    uistack(hBlue, 'up');
+                    if ~isempty(hRed)
+                        uistack(hRed, 'top');
+                    end
+                elseif ~isempty(hGray) && ~isempty(hRed)
+                    uistack(hGray, 'bottom');
+                    uistack(hRed, 'top');
+                elseif ~isempty(hBlue) && ~isempty(hRed)
+                    uistack(hBlue, 'bottom');
+                    uistack(hRed, 'top');
+                end
+
+                if currentXAxisScale == "log"
+                    xlim(ax, [xLowerLog xUpperLog]);
+                else
+                    xlim(ax, [0 xUpperLinear]);
+                end
+
+                if options.showMedianLine
+                    if ~isempty(currentData.gray)
+                        xline(ax, median(currentData.gray, 'omitnan'), '--', 'Color', colorGray, 'LineWidth', 1.0, 'HandleVisibility', 'off');
+                    end
+                    if ~isempty(currentData.blue)
+                        xline(ax, median(currentData.blue, 'omitnan'), '--', 'Color', colorBlue, 'LineWidth', 1.0, 'HandleVisibility', 'off');
+                    end
+                    if ~isempty(currentData.red)
+                        xline(ax, median(currentData.red, 'omitnan'), '--', 'Color', colorRed, 'LineWidth', 1.2, 'HandleVisibility', 'off');
+                    end
+                end
+
+                if options.showCdf
+                    yyaxis(ax, 'right');
+                    if ~isempty(currentData.gray)
+                        sortedGray = sort(currentData.gray, 'ascend');
+                        cumGray = (1:numel(sortedGray))' ./ numel(sortedGray);
+                        plot(ax, sortedGray, cumGray, '-', 'Color', colorGray, 'LineWidth', 1.1, 'HandleVisibility', 'off');
+                    end
+                    if ~isempty(currentData.blue)
+                        sortedBlue = sort(currentData.blue, 'ascend');
+                        cumBlue = (1:numel(sortedBlue))' ./ numel(sortedBlue);
+                        plot(ax, sortedBlue, cumBlue, '-', 'Color', colorBlue, 'LineWidth', 1.1, 'HandleVisibility', 'off');
+                    end
+                    if ~isempty(currentData.red)
+                        sortedRed = sort(currentData.red, 'ascend');
+                        cumRed = (1:numel(sortedRed))' ./ numel(sortedRed);
+                        plot(ax, sortedRed, cumRed, '-', 'Color', colorRed, 'LineWidth', 1.1, 'HandleVisibility', 'off');
+                    end
+                    ylim(ax, [0 1]);
+                    ax.YAxis(2).TickLabelInterpreter = 'latex';
+                    yyaxis(ax, 'left');
+                end
+
+                iEnsureAtLeastTwoYTicks(ax, "left");
+                if options.showCdf
+                    iEnsureAtLeastTwoYTicks(ax, "right");
+                    yyaxis(ax, 'left');
+                end
+
+                set(ax, 'TickLabelInterpreter', 'latex');
+                iEnsureAtLeastTwoXTicks(ax);
+                title(ax, sprintf('%s %s', char(sensorPrefix), char(direction)), 'Interpreter', 'latex');
+
+                if panelIdx == 1
+                    legendHandles = gobjects(0);
+                    legendLabels = {};
+                    if ~isempty(hGray)
+                        legendHandles(end+1) = hGray;
+                        legendLabels{end+1} = 'Background';
+                    end
+                    if ~isempty(hBlue)
+                        legendHandles(end+1) = hBlue;
+                        legendLabels{end+1} = strrep(options.blueFlagField, 'flag_', '');
+                    end
+                    if ~isempty(hRed)
+                        legendHandles(end+1) = hRed;
+                        legendLabels{end+1} = strrep(options.redFlagField, 'flag_', '');
+                    end
+                    if ~isempty(legendHandles)
+                        legend(ax, legendHandles, legendLabels, 'Location', 'northeast', 'Interpreter', 'latex');
+                    end
+                end
+
+                panelData(panelIdx).sensorPrefix = char(sensorPrefix);
+                panelData(panelIdx).sensorName = char(sensorName);
+                panelData(panelIdx).direction = char(direction);
+                panelData(panelIdx).redBinCounts = histcounts(currentData.red, sharedBinEdges);
             end
-        elseif ~isempty(hGray) && ~isempty(hRed)
-            uistack(hGray, 'bottom');
-            uistack(hRed, 'top');
-        elseif ~isempty(hBlue) && ~isempty(hRed)
-            uistack(hBlue, 'bottom');
-            uistack(hRed, 'top');
         end
 
-        if currentXAxisScale == "log"
-            xlim(ax, [xLowerLog xUpperLog]);
-        else
-            xlim(ax, [0 xUpperLinear]);
-        end
+        iSetGlobalAxisLabels(tlo);
 
-        yLimits = ylim(ax);
-        if options.showBoxStats
-            blueLabel = strrep(options.blueFlagField, 'flag_', '');
-            redLabel = strrep(options.redFlagField, 'flag_', '');
-            catLabels = {'Background', blueLabel, redLabel};
-            catValues = {grayValues, blueValues, redValues};
-            textOffset = 0;
-            for catIdx = 1:3
-                statsValues = catValues{catIdx};
-                if ~isempty(statsValues)
-                    distributionStats = iComputeDistributionStats(statsValues);
-                    statsText = sprintf('%s: n=%d, med=%.4f, IQR=%.4f', catLabels{catIdx}, distributionStats.count, distributionStats.medianValue, distributionStats.iqrValue);
-                    text(ax, 0.02, 0.98 - textOffset, statsText, 'Units', 'normalized', 'HorizontalAlignment', 'left', ...
-                        'VerticalAlignment', 'top', 'Interpreter', 'none', 'BackgroundColor', [1 1 1], ...
-                        'Color', [0.1 0.1 0.1], 'FontSize', 8);
-                    textOffset = textOffset + 0.02;
+        if isfinite(selectedPanelIdx)
+            if selectedPanelIdx < 1 || selectedPanelIdx > numel(panelData)
+                selectedPanelIdx = NaN;
+                selectedRedBinIdx = NaN;
+            else
+                currentRedCounts = panelData(selectedPanelIdx).redBinCounts;
+                if isempty(currentRedCounts)
+                    selectedPanelIdx = NaN;
+                    selectedRedBinIdx = NaN;
+                else
+                    selectedRedBinIdx = max(1, min(selectedRedBinIdx, numel(currentRedCounts)));
+                    if currentRedCounts(selectedRedBinIdx) <= 0
+                        selectedPanelIdx = NaN;
+                        selectedRedBinIdx = NaN;
+                    end
                 end
             end
         end
 
-        if options.showMedianLine
-            if ~isempty(grayValues)
-                xline(ax, median(grayValues, 'omitnan'), '--', 'Color', [0.5 0.5 0.5], 'LineWidth', 1.0, 'HandleVisibility', 'off');
-            end
-            if ~isempty(blueValues)
-                xline(ax, median(blueValues, 'omitnan'), '--', 'Color', [0.2 0.4 0.8], 'LineWidth', 1.0, 'HandleVisibility', 'off');
-            end
-            if ~isempty(redValues)
-                xline(ax, median(redValues, 'omitnan'), '--k', 'LineWidth', 1.2, 'HandleVisibility', 'off');
-            end
-        end
-
-        if options.showCdf
-            sortedValues = [];
-            cumulativeProbability = [];
-            for catValues = {grayValues, blueValues, redValues}
-                if ~isempty(catValues{1})
-                    sortedCat = sort(catValues{1}, 'ascend');
-                    cumProb = (1:numel(sortedCat))' ./ numel(sortedCat);
-                    sortedValues = [sortedValues; NaN; sortedCat];
-                    cumulativeProbability = [cumulativeProbability; NaN; cumProb];
-                end
-            end
-            if ~isempty(sortedValues)
-                yyaxis(ax, 'right');
-                plot(ax, sortedValues, cumulativeProbability, '-', 'Color', [0 0 0.55], 'LineWidth', 1.1, 'HandleVisibility', 'off');
-                ylim(ax, [0 1]);
-                ax.YAxis(2).TickLabelInterpreter = 'latex';
-                ylabel(ax, 'CDF', 'Interpreter', 'latex');
-                yyaxis(ax, 'left');
-            end
-        end
-
-        iEnsureAtLeastTwoYTicks(ax, "left");
-        if options.showCdf
-            iEnsureAtLeastTwoYTicks(ax, "right");
-            yyaxis(ax, 'left');
-        end
-
-        set(ax, 'TickLabelInterpreter', 'latex');
-        iEnsureAtLeastTwoXTicks(ax);
-
-        legendHandles = gobjects(0);
-        legendLabels = {};
-        if ~isempty(hGray)
-            legendHandles(end+1) = hGray;
-            legendLabels{end+1} = 'Background';
-        end
-        if ~isempty(hBlue)
-            legendHandles(end+1) = hBlue;
-            blueLabel = strrep(options.blueFlagField, 'flag_', '');
-            legendLabels{end+1} = blueLabel;
-        end
-        if ~isempty(hRed)
-            legendHandles(end+1) = hRed;
-            redLabel = strrep(options.redFlagField, 'flag_', '');
-            legendLabels{end+1} = redLabel;
-        end
-        if options.showMedianLine
-            legendHandles(end+1) = plot(ax, NaN, NaN, '--k', 'LineWidth', 1.2);
-            legendLabels{end+1} = 'Median';
-        end
-        if ~isempty(legendHandles)
-            legend(ax, legendHandles, legendLabels, 'Location', 'north-east', 'Interpreter', 'latex');
-        end
-
-        xlabel(ax, 'Damping $\zeta$', 'Interpreter', 'latex');
-        if options.normalization == "probability"
-            ylabel(ax, 'Probability', 'Interpreter', 'latex');
-        else
-            ylabel(ax, 'Count', 'Interpreter', 'latex');
-        end
-
-        title(ax, sprintf(['Damping Histogram (%s Direction, X-axis: %s, bins: %d)  ', ...
-            '[X/Y/Z switch direction | L toggle log/linear | +/- bins | S save]'], ...
-            char(currentDirection), char(currentXAxisScale), currentNumBins), ...
-            'Interpreter', 'latex');
-
-        histogramContext = struct('ax', ax, 'sharedBinEdges', sharedBinEdges, ...
-            'grayValues', grayValues, 'blueValues', blueValues, 'redValues', redValues, ...
-            'xAxisScale', currentXAxisScale, 'direction', currentDirection, 'xLowerLog', xLowerLog);
+        histogramContext = struct('tlo', tlo, 'axesHandles', axesHandles, 'panelData', {panelData}, 'sharedBinEdges', sharedBinEdges);
         setappdata(fig, 'HistogramContext', histogramContext);
-
+        iSetFigureTitle(tlo, true);
+        iUpdateSelectionVisuals(histogramContext);
         drawnow;
     end
 
     function iUpdateSelectionVisuals(histogramContext)
+        for axisIdx = 1:numel(histogramContext.axesHandles)
+            delete(findobj(histogramContext.axesHandles(axisIdx), 'Tag', 'SelectedRedBinPatch'));
+        end
+
+        if ~isfinite(selectedPanelIdx) || ~isfinite(selectedRedBinIdx)
+            return;
+        end
+        if selectedPanelIdx < 1 || selectedPanelIdx > numel(histogramContext.panelData)
+            return;
+        end
+        if selectedRedBinIdx < 1 || selectedRedBinIdx > numel(histogramContext.sharedBinEdges) - 1
+            return;
+        end
+
+        selectedAxis = histogramContext.axesHandles(selectedPanelIdx);
+        yyaxis(selectedAxis, 'left');
+        yLimits = ylim(selectedAxis);
+        selectedLeft = histogramContext.sharedBinEdges(selectedRedBinIdx);
+        selectedRight = histogramContext.sharedBinEdges(selectedRedBinIdx + 1);
+        patch(selectedAxis, [selectedLeft selectedRight selectedRight selectedLeft], ...
+            [yLimits(1) yLimits(1) yLimits(2) yLimits(2)], [0.9 0.2 0.2], ...
+            'FaceAlpha', 0.10, 'EdgeColor', [0.65 0.1 0.1], 'LineWidth', 1.0, ...
+            'Tag', 'SelectedRedBinPatch', 'HandleVisibility', 'off', 'HitTest', 'off');
     end
 
-    function iOpenDashboard()
+    function iOpenDashboard(selectedBinOverride, selectedPanelOverride)
         histogramContext = getappdata(fig, 'HistogramContext');
         if isempty(histogramContext)
             return;
         end
-        
-        warning('Dashboard selection via right-click is no longer available. Use the separate plotDampingSelectionDashboard function to explore data.');
+
+        if nargin >= 2 && isfinite(selectedPanelOverride)
+            selectedPanel = selectedPanelOverride;
+        else
+            selectedPanel = selectedPanelIdx;
+        end
+        if nargin >= 1 && isfinite(selectedBinOverride)
+            selectedBin = selectedBinOverride;
+        else
+            selectedBin = selectedRedBinIdx;
+        end
+
+        if ~isfinite(selectedPanel) || ~isfinite(selectedBin)
+            warning('No red bin selected. Right-click a red bin first.');
+            return;
+        end
+        selectedPanel = max(1, min(selectedPanel, numel(histogramContext.panelData)));
+        selectedBin = max(1, min(selectedBin, numel(histogramContext.sharedBinEdges) - 1));
+
+        selectedPanelData = histogramContext.panelData(selectedPanel);
+        dampingMin = histogramContext.sharedBinEdges(selectedBin);
+        dampingMax = histogramContext.sharedBinEdges(selectedBin + 1);
+
+        peakTable = extractDampingPeakTable(allStats, options.redFlagField, selectedPanelData.direction, ...
+            frequencyFocus=options.frequencyFocus, ...
+            targetFreqs=targetFreqs, ...
+            freqTolerance=freqTolerance);
+        if isempty(peakTable)
+            warning('No peak table available for selected red events.');
+            return;
+        end
+
+        sensorMask = strcmp(string(peakTable.sensor), string(selectedPanelData.sensorName));
+        selectedPeaks = peakTable(sensorMask & peakTable.damping >= dampingMin & peakTable.damping <= dampingMax, :);
+        if isempty(selectedPeaks)
+            warning('No red peaks found in selected damping range [%.5f, %.5f] for %s.', dampingMin, dampingMax, selectedPanelData.sensorName);
+            return;
+        end
+
+        iPrintVerbose('[plotDampingByEventType] Opening dashboard for %s in bin [%.5f, %.5f] with %d peaks.', ...
+            selectedPanelData.sensorName, dampingMin, dampingMax, height(selectedPeaks));
+
+        selectionInfo = struct('flagField', options.redFlagField, 'flagName', options.redFlagField, ...
+            'direction', selectedPanelData.direction, 'sensor', selectedPanelData.sensorName, ...
+            'dampingMin', dampingMin, 'dampingMax', dampingMax);
+        plotDampingSelectionDashboard(selectedPeaks, selectionInfo, windContext="global");
     end
 
     function iSaveCurrentFigure()
         if strlength(options.figureFolder) == 0
+            iPrintVerbose('[plotDampingByEventType] Save skipped: figureFolder is empty.');
             return;
         end
-        saveName = sprintf('DampingHistogram_%s', char(currentDirection));
+
+        histogramContext = getappdata(fig, 'HistogramContext');
+        if ~isempty(histogramContext) && isfield(histogramContext, 'tlo') && isgraphics(histogramContext.tlo)
+            iSetFigureTitle(histogramContext.tlo, false);
+        end
+
+        saveName = sprintf('DampingHistogram_AllDirections_%s', char(currentXAxisScale));
         saveFig(fig, options.figureFolder, saveName, 2, 1, scaleFigure=false);
+
+        if ~isempty(histogramContext) && isfield(histogramContext, 'tlo') && isgraphics(histogramContext.tlo)
+            iSetFigureTitle(histogramContext.tlo, true);
+        end
+        iPrintVerbose('[plotDampingByEventType] Figure saved as %s.', saveName);
+    end
+
+    function iSetGlobalAxisLabels(tlo)
+        xlabel(tlo, 'Damping $\zeta$', 'Interpreter', 'latex');
+        if options.normalization == "probability"
+            ylabel(tlo, 'Probability', 'Interpreter', 'latex');
+        else
+            ylabel(tlo, 'Count', 'Interpreter', 'latex');
+        end
+
+        existingRightLabel = findall(fig, 'Tag', 'GlobalRightYLabel');
+        if ~isempty(existingRightLabel)
+            delete(existingRightLabel);
+        end
+        if options.showCdf
+            annotation(fig, 'textbox', [0.978, 0.44, 0.02, 0.12], ...
+                'String', 'CDF', 'Interpreter', 'latex', 'EdgeColor', 'none', ...
+                'HorizontalAlignment', 'center', 'VerticalAlignment', 'middle', ...
+                'Rotation', 90, 'Tag', 'GlobalRightYLabel');
+        end
+    end
+
+    function iSetFigureTitle(tlo, includeUiHints)
+        if includeUiHints
+            titleText = sprintf(['Damping Histograms by Sensor and Direction (X-axis: %s, bins: %d)  ', ...
+                '[L toggle log/linear | +/- bins | Right-click red bin inspect | D inspect selected | S save]'], ...
+                char(currentXAxisScale), currentNumBins);
+        else
+            titleText = sprintf('Damping Histograms by Sensor and Direction (X-axis: %s, bins: %d)', ...
+                char(currentXAxisScale), currentNumBins);
+        end
+        title(tlo, titleText, 'Interpreter', 'latex');
+    end
+
+    function iPrintVerbose(message, varargin)
+        if ~options.verboseClicks
+            return;
+        end
+        if isempty(varargin)
+            fprintf('%s\n', message);
+        else
+            fprintf([message '\n'], varargin{:});
+        end
     end
 
     function iEnsureAtLeastTwoYTicks(ax, axisSide)
@@ -388,9 +566,22 @@ function shouldDecrease = iIsDecreaseBins(event)
 shouldDecrease = strcmp(event.Key, 'subtract') || strcmp(event.Key, 'minus') || strcmp(event.Key, 'hyphen') || strcmp(event.Character, '-');
 end
 
-function directionData = iCollectDirectionData(allStats, direction, frequencyFocus, targetFreqs, freqTolerance, redFlagField, blueFlagField)
-directionData = struct('gray', [], 'blue', [], 'red', []);
-sensorNames = ["Conc_" + direction, "Steel_" + direction];
+function binIndex = iGetBinIndex(xValue, binEdges)
+if xValue <= binEdges(1)
+    binIndex = 1;
+    return;
+end
+if xValue >= binEdges(end)
+    binIndex = numel(binEdges) - 1;
+    return;
+end
+binIndex = find(binEdges <= xValue, 1, 'last');
+binIndex = min(max(binIndex, 1), numel(binEdges) - 1);
+end
+
+function sensorDirectionData = iCollectSensorDirectionData(allStats, sensorName, frequencyFocus, targetFreqs, freqTolerance, redFlagField, blueFlagField)
+sensorName = string(sensorName);
+sensorDirectionData = struct('gray', [], 'blue', [], 'red', []);
 
 redFlags = false(height(allStats), 1);
 if ismember(redFlagField, allStats.Properties.VariableNames)
@@ -406,39 +597,36 @@ isRed = redFlags;
 isBlue = ~redFlags & blueFlags;
 isGray = ~redFlags & ~blueFlags;
 
+sensorNameChar = char(sensorName);
 for rowIdx = 1:height(allStats)
-    for sensorName = sensorNames
-        sensorNameChar = char(sensorName);
-        if ~isfield(allStats.psdPeaks, sensorNameChar)
-            continue;
-        end
+    if ~isfield(allStats.psdPeaks, sensorNameChar)
+        continue;
+    end
 
-        peakStruct = allStats.psdPeaks(rowIdx).(sensorNameChar);
-        if ~isfield(peakStruct, 'locations') || ~isfield(peakStruct, 'dampingRatios')
-            continue;
-        end
+    peakStruct = allStats.psdPeaks(rowIdx).(sensorNameChar);
+    if ~isfield(peakStruct, 'locations') || ~isfield(peakStruct, 'dampingRatios')
+        continue;
+    end
 
-        locations = peakStruct.locations(:);
-        damping = peakStruct.dampingRatios(:);
-        validMask = isfinite(locations) & isfinite(damping) & damping > 0 & damping < 1;
+    locations = peakStruct.locations(:);
+    damping = peakStruct.dampingRatios(:);
+    validMask = isfinite(locations) & isfinite(damping) & damping > 0 & damping < 1;
 
-        if frequencyFocus == "target"
-            nearTargetMask = false(size(locations));
-            for targetFrequency = targetFreqs(:)'
-                nearTargetMask = nearTargetMask | abs(locations - targetFrequency) <= freqTolerance;
-            end
-            validMask = validMask & nearTargetMask;
+    if frequencyFocus == "target"
+        nearTargetMask = false(size(locations));
+        for targetFrequency = targetFreqs(:)'
+            nearTargetMask = nearTargetMask | abs(locations - targetFrequency) <= freqTolerance;
         end
+        validMask = validMask & nearTargetMask;
+    end
 
-        validDamping = damping(validMask);
-        
-        if isRed(rowIdx)
-            directionData.red = [directionData.red; validDamping];
-        elseif isBlue(rowIdx)
-            directionData.blue = [directionData.blue; validDamping];
-        elseif isGray(rowIdx)
-            directionData.gray = [directionData.gray; validDamping];
-        end
+    validDamping = damping(validMask);
+    if isRed(rowIdx)
+        sensorDirectionData.red = [sensorDirectionData.red; validDamping];
+    elseif isBlue(rowIdx)
+        sensorDirectionData.blue = [sensorDirectionData.blue; validDamping];
+    elseif isGray(rowIdx)
+        sensorDirectionData.gray = [sensorDirectionData.gray; validDamping];
     end
 end
 end
@@ -452,20 +640,35 @@ end
 logicalColumn = logicalColumn(:);
 end
 
-function globalMinPositive = iGetGlobalMinPositiveDamping(dampingByDirection, directions)
+function globalMinPositive = iGetGlobalMinPositiveDamping(dampingBySensorDirection, sensorPrefixes, directions)
 globalMinPositive = inf;
-for direction = directions
-    directionData = dampingByDirection.(char(direction));
-    for catField = {'gray', 'blue', 'red'}
-        currentValues = directionData.(catField{1});
-        currentValues = currentValues(currentValues > 0 & isfinite(currentValues));
-        if ~isempty(currentValues)
-            globalMinPositive = min(globalMinPositive, min(currentValues));
+for sensorPrefix = sensorPrefixes
+    for direction = directions
+        sensorDirectionData = dampingBySensorDirection.(char(sensorPrefix)).(char(direction));
+        for category = {'gray', 'blue', 'red'}
+            currentValues = sensorDirectionData.(category{1});
+            currentValues = currentValues(currentValues > 0 & isfinite(currentValues));
+            if ~isempty(currentValues)
+                globalMinPositive = min(globalMinPositive, min(currentValues));
+            end
         end
     end
 end
 if ~isfinite(globalMinPositive)
     globalMinPositive = 1e-4;
+end
+end
+
+function globalMaxValue = iGetGlobalMaxDamping(dampingBySensorDirection, sensorPrefixes, directions)
+globalMaxValue = -inf;
+for sensorPrefix = sensorPrefixes
+    for direction = directions
+        sensorDirectionData = dampingBySensorDirection.(char(sensorPrefix)).(char(direction));
+        globalMaxValue = max([globalMaxValue, iGetStructMax(sensorDirectionData.gray), iGetStructMax(sensorDirectionData.blue), iGetStructMax(sensorDirectionData.red)]);
+    end
+end
+if ~isfinite(globalMaxValue)
+    globalMaxValue = NaN;
 end
 end
 
@@ -508,28 +711,4 @@ if options.frequencyFocus == "target"
 else
     freqTolerance = NaN;
 end
-end
-
-function distributionStats = iComputeDistributionStats(dampingValues)
-distributionStats.count = numel(dampingValues);
-distributionStats.meanValue = mean(dampingValues, 'omitnan');
-distributionStats.stdValue = std(dampingValues, 'omitnan');
-distributionStats.medianValue = median(dampingValues, 'omitnan');
-distributionStats.q1 = prctile(dampingValues, 25);
-distributionStats.q3 = prctile(dampingValues, 75);
-distributionStats.iqrValue = distributionStats.q3 - distributionStats.q1;
-
-lowerFence = distributionStats.q1 - 1.5 * distributionStats.iqrValue;
-upperFence = distributionStats.q3 + 1.5 * distributionStats.iqrValue;
-inWhiskerMask = dampingValues >= lowerFence & dampingValues <= upperFence;
-whiskerCandidates = dampingValues(inWhiskerMask);
-
-if isempty(whiskerCandidates)
-    distributionStats.lowerWhisker = min(dampingValues, [], 'omitnan');
-    distributionStats.upperWhisker = max(dampingValues, [], 'omitnan');
-else
-    distributionStats.lowerWhisker = min(whiskerCandidates, [], 'omitnan');
-    distributionStats.upperWhisker = max(whiskerCandidates, [], 'omitnan');
-end
-
 end

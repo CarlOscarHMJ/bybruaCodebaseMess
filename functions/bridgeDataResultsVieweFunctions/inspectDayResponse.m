@@ -10,7 +10,7 @@ arguments
     options.filterOrder double = 7
     options.filterLowFreq double = 0.4
     options.filterHighFreq double = 15
-    options.nfft double = 2^11
+    options.nfft double = 2^15
     options.freqMethod string {mustBeMember(options.freqMethod, ["welch", "burg", "stft"])} = "welch"
     options.burgOrder double = 50
     options.figureFolder string = 'figures/RwivDiagnostics'

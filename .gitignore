@@ -3,6 +3,7 @@
 /Description/
 /Video/
 /old code/
+/.venv/
 
 # temp files
 *.asv

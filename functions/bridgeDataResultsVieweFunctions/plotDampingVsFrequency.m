@@ -117,17 +117,17 @@ function plotDampingVsFrequency(allStats, limits, options)
 
             if any(d.isGray)
                 scatter(ax, d.freqs(d.isGray), d.damping(d.isGray), 30, [0.6 0.6 0.6], ...
-                    'filled', 'MarkerFaceAlpha', 0.25, 'MarkerEdgeColor', 'none');
+                    'filled', 'MarkerFaceAlpha', 0.1, 'MarkerEdgeColor', 'none');
             end
 
             if any(d.isBlue)
                 scatter(ax, d.freqs(d.isBlue), d.damping(d.isBlue), 40, [0.2 0.4 0.6], ...
-                    'filled', 'MarkerFaceAlpha', 0.6, 'MarkerEdgeColor', 'none');
+                    'filled', 'MarkerFaceAlpha', 0.1, 'MarkerEdgeColor', 'none');
             end
 
             if any(d.isRwiv)
                 scatter(ax, d.freqs(d.isRwiv), d.damping(d.isRwiv), 50, [0.8 0.2 0.2], ...
-                    'filled', 'MarkerFaceAlpha', 0.7, 'MarkerEdgeColor', 'none');
+                    'filled', 'MarkerFaceAlpha', 0.1, 'MarkerEdgeColor', 'none');
             end
 
             for tf = targetFreqs(:)'
@@ -169,7 +169,7 @@ function plotDampingVsFrequency(allStats, limits, options)
         yLimits = ylim(ax);
         iEnsureAtLeastTwoYTicks(ax, yLimits(1), yLimits(2));
         set(ax, 'YTickMode', 'manual');
-        ytickformat(ax, '%.4g');
+        ytickformat(ax, '%1.e');
     end
 
     legend(ax, {'Background','Env. Match','RWIV Event'}, ...
