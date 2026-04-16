@@ -21,7 +21,7 @@ end
 
 setups = iBuildSetupGrid(options);
 numSetups = numel(setups);
-runResults = repmat(struct(), numSetups, 1);
+runResults = cell(numSetups, 1);
 
 if options.verbose
     fprintf('[runOvernightCableRwivOptimization] Starting %d setups\n', numSetups);
@@ -37,7 +37,7 @@ if options.parallelizeSetups
     end
 
     parfor setupIdx = 1:numSetups
-        runResults(setupIdx) = iRunSingleSetup(setups(setupIdx), allStats, cableConfig, options, true);
+        runResults{setupIdx} = iRunSingleSetup(setups(setupIdx), allStats, cableConfig, options, true);
     end
 
     if options.verbose
@@ -47,20 +47,22 @@ else
     progressState = iInitializeProgressState(numSetups, options);
 
     for setupIdx = 1:numSetups
-        runResults(setupIdx) = iRunSingleSetup(setups(setupIdx), allStats, cableConfig, options, false);
+        runResults{setupIdx} = iRunSingleSetup(setups(setupIdx), allStats, cableConfig, options, false);
 
         if options.showProgressPlot && (mod(setupIdx, options.progressUpdateEvery) == 0 || setupIdx == numSetups)
-            progressState = iUpdateProgressState(progressState, setupIdx, runResults(setupIdx));
+            progressState = iUpdateProgressState(progressState, setupIdx, runResults{setupIdx});
         end
 
         if options.verbose
-            setup = runResults(setupIdx).setup;
+            setup = runResults{setupIdx}.setup;
             fprintf('[runOvernightCableRwivOptimization] %d/%d done (%s, seed=%d, eval=%d, lambda=%.2f, lambdaSq=%.2f, minWet=%d), objective=%.3f\n', ...
                 setupIdx, numSetups, char(setup.optimizer), setup.seed, setup.maxFunctionEvaluations, ...
-                setup.lambdaDry, setup.lambdaDrySq, setup.minWetSamples, runResults(setupIdx).summary.objective);
+                setup.lambdaDry, setup.lambdaDrySq, setup.minWetSamples, runResults{setupIdx}.summary.objective);
         end
     end
 end
+
+runResults = vertcat(runResults{:});
 
 rankingTable = iBuildRankingTable(runResults);
 successfulRows = rankingTable(rankingTable.success, :);
