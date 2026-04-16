@@ -22,57 +22,43 @@ end
 setups = iBuildSetupGrid(options);
 numSetups = numel(setups);
 runResults = repmat(struct(), numSetups, 1);
-progressState = iInitializeProgressState(numSetups, options);
 
 if options.verbose
     fprintf('[runOvernightCableRwivOptimization] Starting %d setups\n', numSetups);
 end
 
-for setupIdx = 1:numSetups
-    setup = setups(setupIdx);
-    localOptions = struct();
-    localOptions.optimizer = setup.optimizer;
-    localOptions.runSweep = false;
-    localOptions.maxFunctionEvaluations = setup.maxFunctionEvaluations;
-    localOptions.maxTime = setup.maxTime;
-    localOptions.lookbackDuration = options.lookbackDuration;
-    localOptions.dryRainThreshold = options.dryRainThreshold;
-    localOptions.lambdaDry = setup.lambdaDry;
-    localOptions.lambdaDrySq = setup.lambdaDrySq;
-    localOptions.enforceZeroDry = options.enforceZeroDry;
-    localOptions.saveFlagName = "";
-    localOptions.display = options.display;
-    localOptions.seed = setup.seed;
-    localOptions.verbose = options.verbose;
-    localOptions.runPrallel = options.runPrallel;
-    localOptions.numWorkers = options.numWorkers;
-    localOptions.useInitialGuess = options.useInitialGuess;
-    localOptions.initialFlagField = options.initialFlagField;
-    localOptions.initialGuessFreqTolerance = options.initialGuessFreqTolerance;
-    localOptions.initialGuessIntensityQuantile = options.initialGuessIntensityQuantile;
-    localOptions.initialGuessDampingQuantile = options.initialGuessDampingQuantile;
-    localOptions.initialGuessMinDirectionsRequired = options.initialGuessMinDirectionsRequired;
-    localOptions.initialGuessMinPeaksPerDirection = options.initialGuessMinPeaksPerDirection;
-    localOptions.minWetSamples = setup.minWetSamples;
+if options.parallelizeSetups
+    iEnsureSetupPool(options.numSetupWorkers);
+    if options.showProgressPlot && options.verbose
+        fprintf('[runOvernightCableRwivOptimization] Progress plot disabled in setup-parallel mode.\n');
+    end
+    if options.runPrallel && options.verbose
+        fprintf('[runOvernightCableRwivOptimization] Nested parallelism disabled; running each setup serially inside workers.\n');
+    end
 
-    [singleResult, ~] = optimizeCableRwivCriteria(allStats, cableConfig, localOptions);
-
-    runResults(setupIdx).setup = setup;
-    runResults(setupIdx).bestRun = singleResult.bestRun;
-    runResults(setupIdx).summary = singleResult.summary;
-    runResults(setupIdx).bestParameters = singleResult.bestParameters;
-    runResults(setupIdx).bestParametersTable = singleResult.bestParametersTable;
-    runResults(setupIdx).bestLayout = singleResult.bestLayout;
-    runResults(setupIdx).bestFlag = singleResult.bestFlag;
-    runResults(setupIdx).optimizerMessage = singleResult.bestRun.message;
-    if options.showProgressPlot && (mod(setupIdx, options.progressUpdateEvery) == 0 || setupIdx == numSetups)
-        progressState = iUpdateProgressState(progressState, setupIdx, runResults(setupIdx));
+    parfor setupIdx = 1:numSetups
+        runResults(setupIdx) = iRunSingleSetup(setups(setupIdx), allStats, cableConfig, options, true);
     end
 
     if options.verbose
-        fprintf('[runOvernightCableRwivOptimization] %d/%d done (%s, seed=%d, eval=%d, lambda=%.2f, lambdaSq=%.2f, minWet=%d), objective=%.3f\n', ...
-            setupIdx, numSetups, char(setup.optimizer), setup.seed, setup.maxFunctionEvaluations, ...
-            setup.lambdaDry, setup.lambdaDrySq, setup.minWetSamples, singleResult.summary.objective);
+        fprintf('[runOvernightCableRwivOptimization] Parallel sweep completed (%d setups).\n', numSetups);
+    end
+else
+    progressState = iInitializeProgressState(numSetups, options);
+
+    for setupIdx = 1:numSetups
+        runResults(setupIdx) = iRunSingleSetup(setups(setupIdx), allStats, cableConfig, options, false);
+
+        if options.showProgressPlot && (mod(setupIdx, options.progressUpdateEvery) == 0 || setupIdx == numSetups)
+            progressState = iUpdateProgressState(progressState, setupIdx, runResults(setupIdx));
+        end
+
+        if options.verbose
+            setup = runResults(setupIdx).setup;
+            fprintf('[runOvernightCableRwivOptimization] %d/%d done (%s, seed=%d, eval=%d, lambda=%.2f, lambdaSq=%.2f, minWet=%d), objective=%.3f\n', ...
+                setupIdx, numSetups, char(setup.optimizer), setup.seed, setup.maxFunctionEvaluations, ...
+                setup.lambdaDry, setup.lambdaDrySq, setup.minWetSamples, runResults(setupIdx).summary.objective);
+        end
     end
 end
 
@@ -207,6 +193,8 @@ if ~isfield(options, 'minWetSamples'), options.minWetSamples = options.minWetSam
 if ~isfield(options, 'requireSuccessfulRun'), options.requireSuccessfulRun = true; end
 if ~isfield(options, 'showProgressPlot'), options.showProgressPlot = true; end
 if ~isfield(options, 'progressUpdateEvery'), options.progressUpdateEvery = 1; end
+if ~isfield(options, 'parallelizeSetups'), options.parallelizeSetups = false; end
+if ~isfield(options, 'numSetupWorkers'), options.numSetupWorkers = []; end
 
 options.optimizerList = string(options.optimizerList);
 options.seedList = double(options.seedList);
@@ -236,10 +224,73 @@ options.minWetSamples = double(options.minWetSamples);
 options.requireSuccessfulRun = logical(options.requireSuccessfulRun);
 options.showProgressPlot = logical(options.showProgressPlot);
 options.progressUpdateEvery = max(1, round(double(options.progressUpdateEvery)));
+options.parallelizeSetups = logical(options.parallelizeSetups);
 if isempty(options.numWorkers)
     options.numWorkers = [];
 else
     options.numWorkers = double(options.numWorkers);
+end
+if isempty(options.numSetupWorkers)
+    options.numSetupWorkers = [];
+else
+    options.numSetupWorkers = double(options.numSetupWorkers);
+end
+end
+
+function runResult = iRunSingleSetup(setup, allStats, cableConfig, options, forceSerialInner)
+localOptions = struct();
+localOptions.optimizer = setup.optimizer;
+localOptions.runSweep = false;
+localOptions.maxFunctionEvaluations = setup.maxFunctionEvaluations;
+localOptions.maxTime = setup.maxTime;
+localOptions.lookbackDuration = options.lookbackDuration;
+localOptions.dryRainThreshold = options.dryRainThreshold;
+localOptions.lambdaDry = setup.lambdaDry;
+localOptions.lambdaDrySq = setup.lambdaDrySq;
+localOptions.enforceZeroDry = options.enforceZeroDry;
+localOptions.saveFlagName = "";
+localOptions.display = options.display;
+localOptions.seed = setup.seed;
+localOptions.verbose = false;
+localOptions.runPrallel = options.runPrallel && ~forceSerialInner;
+localOptions.numWorkers = options.numWorkers;
+localOptions.useInitialGuess = options.useInitialGuess;
+localOptions.initialFlagField = options.initialFlagField;
+localOptions.initialGuessFreqTolerance = options.initialGuessFreqTolerance;
+localOptions.initialGuessIntensityQuantile = options.initialGuessIntensityQuantile;
+localOptions.initialGuessDampingQuantile = options.initialGuessDampingQuantile;
+localOptions.initialGuessMinDirectionsRequired = options.initialGuessMinDirectionsRequired;
+localOptions.initialGuessMinPeaksPerDirection = options.initialGuessMinPeaksPerDirection;
+localOptions.minWetSamples = setup.minWetSamples;
+
+[singleResult, ~] = optimizeCableRwivCriteria(allStats, cableConfig, localOptions);
+
+runResult = struct();
+runResult.setup = setup;
+runResult.bestRun = singleResult.bestRun;
+runResult.summary = singleResult.summary;
+runResult.bestParameters = singleResult.bestParameters;
+runResult.bestParametersTable = singleResult.bestParametersTable;
+runResult.bestLayout = singleResult.bestLayout;
+runResult.bestFlag = singleResult.bestFlag;
+runResult.optimizerMessage = singleResult.bestRun.message;
+end
+
+function iEnsureSetupPool(numWorkers)
+pool = gcp('nocreate');
+if isempty(numWorkers)
+    if isempty(pool)
+        parpool('local');
+    end
+    return;
+end
+
+numWorkers = max(1, round(numWorkers));
+if isempty(pool)
+    parpool('local', numWorkers);
+elseif pool.NumWorkers ~= numWorkers
+    delete(pool);
+    parpool('local', numWorkers);
 end
 end
 
