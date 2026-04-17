@@ -22,6 +22,12 @@ end
 setups = iBuildSetupGrid(options);
 numSetups = numel(setups);
 runResults = cell(numSetups, 1);
+completedMask = false(numSetups, 1);
+runtimeState = iInitializeRuntimeState(numSetups);
+
+if options.checkpointEnabled
+    iEnsureCheckpointFolder(options.checkpointFile);
+end
 
 if options.verbose
     fprintf('[runOvernightCableRwivOptimization] Starting %d setups\n', numSetups);
@@ -36,8 +42,27 @@ if options.parallelizeSetups
         fprintf('[runOvernightCableRwivOptimization] Nested parallelism disabled; running each setup serially inside workers.\n');
     end
 
-    parfor setupIdx = 1:numSetups
-        runResults{setupIdx} = iRunSingleSetup(setups(setupIdx), allStats, cableConfig, options, true);
+    numInFlight = min(numSetups, gcp('nocreate').NumWorkers);
+    futures = parallel.FevalFuture.empty(0, 1);
+    nextSetupIdx = 1;
+
+    for workerSlot = 1:numInFlight
+        futures(workerSlot, 1) = parfeval(@iRunSingleSetupIndexed, 2, nextSetupIdx, setups(nextSetupIdx), allStats, cableConfig, options, true);
+        nextSetupIdx = nextSetupIdx + 1;
+    end
+
+    while any(~completedMask)
+        [completedFutureIdx, completedSetupIdx, completedRunResult] = fetchNext(futures);
+        runResults{completedSetupIdx} = completedRunResult;
+        completedMask(completedSetupIdx) = true;
+        runtimeState = iHandleProgressUpdate(runtimeState, options, runResults, completedMask, completedSetupIdx);
+
+        if nextSetupIdx <= numSetups
+            futures(completedFutureIdx, 1) = parfeval(@iRunSingleSetupIndexed, 2, nextSetupIdx, setups(nextSetupIdx), allStats, cableConfig, options, true);
+            nextSetupIdx = nextSetupIdx + 1;
+        else
+            futures(completedFutureIdx, 1) = [];
+        end
     end
 
     if options.verbose
@@ -48,18 +73,17 @@ else
 
     for setupIdx = 1:numSetups
         runResults{setupIdx} = iRunSingleSetup(setups(setupIdx), allStats, cableConfig, options, false);
+        completedMask(setupIdx) = true;
+        runtimeState = iHandleProgressUpdate(runtimeState, options, runResults, completedMask, setupIdx);
 
         if options.showProgressPlot && (mod(setupIdx, options.progressUpdateEvery) == 0 || setupIdx == numSetups)
             progressState = iUpdateProgressState(progressState, setupIdx, runResults{setupIdx});
         end
-
-        if options.verbose
-            setup = runResults{setupIdx}.setup;
-            fprintf('[runOvernightCableRwivOptimization] %d/%d done (%s, seed=%d, eval=%d, lambda=%.2f, lambdaSq=%.2f, minWet=%d), objective=%.3f\n', ...
-                setupIdx, numSetups, char(setup.optimizer), setup.seed, setup.maxFunctionEvaluations, ...
-                setup.lambdaDry, setup.lambdaDrySq, setup.minWetSamples, runResults{setupIdx}.summary.objective);
-        end
     end
+end
+
+if options.checkpointEnabled && runtimeState.completedSinceCheckpoint > 0
+    iWriteCheckpoint(options.checkpointFile, runResults, completedMask, options, runtimeState);
 end
 
 runResults = vertcat(runResults{:});
@@ -197,6 +221,12 @@ if ~isfield(options, 'showProgressPlot'), options.showProgressPlot = true; end
 if ~isfield(options, 'progressUpdateEvery'), options.progressUpdateEvery = 1; end
 if ~isfield(options, 'parallelizeSetups'), options.parallelizeSetups = false; end
 if ~isfield(options, 'numSetupWorkers'), options.numSetupWorkers = []; end
+if ~isfield(options, 'checkpointEnabled'), options.checkpointEnabled = true; end
+if ~isfield(options, 'checkpointEverySetups'), options.checkpointEverySetups = 5; end
+if ~isfield(options, 'checkpointEveryMinutes'), options.checkpointEveryMinutes = 10; end
+if ~isfield(options, 'checkpointFile'), options.checkpointFile = fullfile('figures', 'BridgeDataProcessed', 'OvernightOptimizationCheckpoint.mat'); end
+if ~isfield(options, 'printProgressEverySetups'), options.printProgressEverySetups = 1; end
+if ~isfield(options, 'printProgressEveryMinutes'), options.printProgressEveryMinutes = 2; end
 
 options.optimizerList = string(options.optimizerList);
 options.seedList = double(options.seedList);
@@ -227,6 +257,12 @@ options.requireSuccessfulRun = logical(options.requireSuccessfulRun);
 options.showProgressPlot = logical(options.showProgressPlot);
 options.progressUpdateEvery = max(1, round(double(options.progressUpdateEvery)));
 options.parallelizeSetups = logical(options.parallelizeSetups);
+options.checkpointEnabled = logical(options.checkpointEnabled);
+options.checkpointEverySetups = max(1, round(double(options.checkpointEverySetups)));
+options.checkpointEveryMinutes = max(0, double(options.checkpointEveryMinutes));
+options.checkpointFile = string(options.checkpointFile);
+options.printProgressEverySetups = max(1, round(double(options.printProgressEverySetups)));
+options.printProgressEveryMinutes = max(0, double(options.printProgressEveryMinutes));
 if isempty(options.numWorkers)
     options.numWorkers = [];
 else
@@ -236,6 +272,101 @@ if isempty(options.numSetupWorkers)
     options.numSetupWorkers = [];
 else
     options.numSetupWorkers = double(options.numSetupWorkers);
+end
+
+function state = iInitializeRuntimeState(numSetups)
+state = struct();
+state.numSetups = numSetups;
+state.startTime = datetime('now');
+state.lastCheckpointTime = state.startTime;
+state.lastPrintTime = state.startTime;
+state.completedSinceCheckpoint = 0;
+state.completedSincePrint = 0;
+end
+
+function runtimeState = iHandleProgressUpdate(runtimeState, options, runResults, completedMask, completedSetupIdx)
+runtimeState.completedSinceCheckpoint = runtimeState.completedSinceCheckpoint + 1;
+runtimeState.completedSincePrint = runtimeState.completedSincePrint + 1;
+
+completedCount = sum(completedMask);
+completedResults = runResults(completedMask);
+
+if options.verbose && iShouldPrintProgress(runtimeState, options)
+    latestResult = runResults{completedSetupIdx};
+    bestObjective = min(cellfun(@(result) result.summary.objective, completedResults));
+    bestDry = min(cellfun(@(result) result.summary.nDry, completedResults));
+    elapsedMin = minutes(datetime('now') - runtimeState.startTime);
+    averageMinPerSetup = elapsedMin / max(completedCount, 1);
+    etaMin = averageMinPerSetup * (runtimeState.numSetups - completedCount);
+
+    setup = latestResult.setup;
+    fprintf('[runOvernightCableRwivOptimization] %d/%d done (%s, seed=%d, eval=%d, lambda=%.2f, lambdaSq=%.2f, minWet=%d) success=%d objective=%.3f nDry=%d nWet=%d | bestObj=%.3f bestDry=%d | elapsed=%.1f min eta=%.1f min\n', ...
+        completedCount, runtimeState.numSetups, char(setup.optimizer), setup.seed, setup.maxFunctionEvaluations, ...
+        setup.lambdaDry, setup.lambdaDrySq, setup.minWetSamples, latestResult.summary.success, latestResult.summary.objective, ...
+        latestResult.summary.nDry, latestResult.summary.nWet, bestObjective, bestDry, elapsedMin, etaMin);
+
+    runtimeState.completedSincePrint = 0;
+    runtimeState.lastPrintTime = datetime('now');
+end
+
+if options.checkpointEnabled && iShouldCheckpoint(runtimeState, options)
+    iWriteCheckpoint(options.checkpointFile, runResults, completedMask, options, runtimeState);
+    runtimeState.completedSinceCheckpoint = 0;
+    runtimeState.lastCheckpointTime = datetime('now');
+end
+end
+
+function shouldPrint = iShouldPrintProgress(runtimeState, options)
+if options.printProgressEverySetups > 0 && runtimeState.completedSincePrint >= options.printProgressEverySetups
+    shouldPrint = true;
+    return;
+end
+
+if options.printProgressEveryMinutes > 0
+    minutesSincePrint = minutes(datetime('now') - runtimeState.lastPrintTime);
+    shouldPrint = minutesSincePrint >= options.printProgressEveryMinutes;
+    return;
+end
+
+shouldPrint = false;
+end
+
+function shouldCheckpoint = iShouldCheckpoint(runtimeState, options)
+if options.checkpointEverySetups > 0 && runtimeState.completedSinceCheckpoint >= options.checkpointEverySetups
+    shouldCheckpoint = true;
+    return;
+end
+
+if options.checkpointEveryMinutes > 0
+    minutesSinceCheckpoint = minutes(datetime('now') - runtimeState.lastCheckpointTime);
+    shouldCheckpoint = minutesSinceCheckpoint >= options.checkpointEveryMinutes;
+    return;
+end
+
+shouldCheckpoint = false;
+end
+
+function iEnsureCheckpointFolder(checkpointFile)
+checkpointFolder = fileparts(char(checkpointFile));
+if ~isempty(checkpointFolder) && ~exist(checkpointFolder, 'dir')
+    mkdir(checkpointFolder);
+end
+end
+
+function iWriteCheckpoint(checkpointFile, runResults, completedMask, options, runtimeState)
+checkpoint = struct();
+checkpoint.savedAt = datetime('now');
+checkpoint.completedMask = completedMask;
+checkpoint.completedCount = sum(completedMask);
+checkpoint.totalSetups = numel(completedMask);
+checkpoint.runResults = runResults;
+checkpoint.options = options;
+checkpoint.elapsedMinutes = minutes(datetime('now') - runtimeState.startTime);
+save(char(checkpointFile), 'checkpoint', '-v7.3');
+end
+
+function [setupIdx, runResult] = iRunSingleSetupIndexed(setupIdx, setup, allStats, cableConfig, options, forceSerialInner)
+runResult = iRunSingleSetup(setup, allStats, cableConfig, options, forceSerialInner);
 end
 end
 
