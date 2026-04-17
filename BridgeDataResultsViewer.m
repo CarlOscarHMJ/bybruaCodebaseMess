@@ -40,7 +40,10 @@ allStats = plotNidComparison(allStats,plotFlags(1:4),limits,'local',figureFolder
 
 
 %% Additional analysis for EURODYN
-plotSpectralShift(allStats,limits,envFlagField='flag_PSDTotal_inGmm',specFlagField='flag_PSDTotal',plotBackground=false,plotAllDirections=true)
+plotSpectralShift(allStats,limits,envFlagField='flag_EnvironmentalMatch', ...
+                  specFlagField='flag_PSDTotal',plotBackground=true, ...
+                  plotAllDirections=false,plotDamping=false, ...
+                  figureFolder=figureFolder)
 % plotSpectralShift(allStats,'flag_EnvironmentalMatch', ["Conc_Z", "Steel_Z"], limits,'local',figureFolder)
 clc
 % plotSpectralShiftHistogram(allStats, targetSensors=["Conc_Z", "Steel_Z"], ...
@@ -83,6 +86,7 @@ flagNames = ["C1 PSD ($\geq$ 4 Peaks Any Dir.)","C5 PSD"];
 allStats = plotNidComparison(allStats, plotFlags, limits, 'global', figureFolder, flagNames, false, 10, 1);
 
 %% Flag optimization
+% Cluster run mode: keep only overnight optimization active.
 runOvernightOptimization = true;
 if runOvernightOptimization
     cableConfig = struct();
@@ -231,9 +235,9 @@ plotTsneData(allStats, ...
 % plotTimeSinceRain(events, allStats);
 %plotGeneralTrends(allStats)
 % plotFrequencyDistribution(allStats, targetFreqs, freqTolerance)
-%% Save data for validation analysis:
-potentialEvents = allStats(allStats.flag_StructuralResponseMatch,:);
-save('figures/BridgeDataProcessed/potentialEvents.mat','potentialEvents','limits')
+%% Save data for validation analysis (disabled for overnight-only runs)
+% potentialEvents = allStats(allStats.flag_StructuralResponseMatch,:);
+% save('figures/BridgeDataProcessed/potentialEvents.mat','potentialEvents','limits')
 %% --- Modular Functions ---
 
 function [allStats, success] = loadProcessedData(resultsDir)

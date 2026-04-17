@@ -273,6 +273,7 @@ if isempty(options.numSetupWorkers)
 else
     options.numSetupWorkers = double(options.numSetupWorkers);
 end
+end
 
 function state = iInitializeRuntimeState(numSetups)
 state = struct();
@@ -367,7 +368,6 @@ end
 
 function [setupIdx, runResult] = iRunSingleSetupIndexed(setupIdx, setup, allStats, cableConfig, options, forceSerialInner)
 runResult = iRunSingleSetup(setup, allStats, cableConfig, options, forceSerialInner);
-end
 end
 
 function runResult = iRunSingleSetup(setup, allStats, cableConfig, options, forceSerialInner)
